@@ -17,6 +17,13 @@ import asyncio
 import io
 from pathlib import Path
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # dotenv not installed, rely on system env vars
+
 # Force UTF-8 encoding on Windows
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
