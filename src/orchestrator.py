@@ -857,7 +857,7 @@ CONTENT:
             chunks_dir.mkdir(parents=True, exist_ok=True)
 
             for insight in insights:
-                insight.save(chunks_dir)
+                await asyncio.to_thread(insight.save, chunks_dir)
 
             # Run automated review if enabled
             if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
@@ -866,14 +866,14 @@ CONTENT:
 
             # Mark thread as extracted
             thread.chunks_extracted = True
-            thread.save(self.data_dir)
+            await asyncio.to_thread(thread.save, self.data_dir)
 
             logger.info(f"[{thread.id}] Extraction and review complete")
 
         except Exception as e:
             logger.error(f"[{thread.id}] Extraction failed: {e}")
             thread.extraction_note = f"Extraction error: {str(e)}"
-            thread.save(self.data_dir)
+            await asyncio.to_thread(thread.save, self.data_dir)
 
     async def _review_insights(
         self,
@@ -926,12 +926,12 @@ CONTENT:
                     insight.status = InsightStatus.INTERESTING
 
                 # Save updated insight
-                insight.save(chunks_dir)
+                await asyncio.to_thread(insight.save, chunks_dir)
 
             except Exception as e:
                 logger.error(f"[{insight.id}] Review failed: {e}")
                 insight.status = InsightStatus.PENDING
-                insight.save(chunks_dir)
+                await asyncio.to_thread(insight.save, chunks_dir)
 
     def _get_blessed_summary(self) -> str:
         """Get a summary of blessed axioms/insights for prompts."""
@@ -983,18 +983,17 @@ CONTENT:
                 data = json.load(f)
                 blessed.extend(data.get("insights", []))
 
-        # Also include chunks with BLESSED status
-        chunks_dir = self.data_dir / "chunks"
-        if chunks_dir.exists():
-            for filepath in chunks_dir.glob("*.json"):
+        # Also include insights with BLESSED status from insights directory
+        blessed_dir = self.data_dir / "chunks" / "insights" / "blessed"
+        if blessed_dir.exists():
+            for filepath in blessed_dir.glob("*.json"):
                 try:
                     insight = AtomicInsight.load(filepath)
-                    if insight.status == InsightStatus.BLESSED:
-                        blessed.append({
-                            "id": insight.id,
-                            "text": insight.insight,
-                            "tags": insight.tags,
-                        })
+                    blessed.append({
+                        "id": insight.id,
+                        "text": insight.insight,
+                        "tags": insight.tags,
+                    })
                 except Exception:
                     pass
 

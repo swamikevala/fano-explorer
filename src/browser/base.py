@@ -246,6 +246,46 @@ class BaseLLMInterface:
             await self.context.close()
         if self.playwright:
             await self.playwright.stop()
+
+    async def check_selector_health(self, selectors: dict[str, list[str]]) -> dict[str, bool]:
+        """
+        Check if critical selectors are present on the page.
+
+        Args:
+            selectors: Dict mapping selector names to lists of possible selectors
+                       e.g. {"input": ["#prompt-textarea", "textarea"], "send": ["button[type=submit]"]}
+
+        Returns:
+            Dict mapping selector names to whether any selector was found
+        """
+        results = {}
+        missing = []
+
+        for name, selector_list in selectors.items():
+            found = False
+            for selector in selector_list:
+                try:
+                    element = await self.page.query_selector(selector)
+                    if element:
+                        found = True
+                        break
+                except Exception:
+                    continue
+
+            results[name] = found
+            if not found:
+                missing.append(name)
+
+        if missing:
+            print(f"\n{'='*60}")
+            print(f"[{self.model_name}] SELECTOR HEALTH WARNING")
+            print(f"{'='*60}")
+            print(f"The following UI elements were not found: {', '.join(missing)}")
+            print(f"This may indicate that {self.model_name}'s UI has changed.")
+            print(f"Check src/browser/{self.model_name}.py and update selectors.")
+            print(f"{'='*60}\n")
+
+        return results
     
     async def send_message(self, message: str) -> str:
         """Send a message and get response. Override in subclasses."""

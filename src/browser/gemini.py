@@ -36,6 +36,7 @@ class GeminiInterface(BaseLLMInterface):
         await super().connect()
         await self._wait_for_ready()
         await self._check_login_status()
+        await self._check_selectors()
     
     async def _check_login_status(self):
         """Check if we're logged in to Gemini."""
@@ -83,7 +84,31 @@ class GeminiInterface(BaseLLMInterface):
         print(f"[gemini] WARNING: Could not find input element")
         print(f"[gemini] Current URL: {self.page.url}")
         self._input_selector = None
-    
+
+    async def _check_selectors(self):
+        """Check critical selectors are present."""
+        await self.check_selector_health({
+            "input": [
+                "div.ql-editor",
+                "rich-textarea",
+                "div[contenteditable='true']",
+            ],
+            "send_button": [
+                "button.send-button",
+                "[aria-label*='Send']",
+                "button[mattooltip='Send message']",
+            ],
+            "response_area": [
+                "message-content",
+                ".model-response",
+                "[data-message-id]",
+            ],
+            "tools_menu": [
+                "button[aria-label*='Select tools']",
+                "button:has-text('Tools')",
+            ],
+        })
+
     async def enable_deep_think(self) -> bool:
         """
         Enable Deep Think mode if available.

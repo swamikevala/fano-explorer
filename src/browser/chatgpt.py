@@ -32,6 +32,8 @@ class ChatGPTInterface(BaseLLMInterface):
         await super().connect()
         # Wait for the chat interface to load
         await self._wait_for_ready()
+        # Run selector health check
+        await self._check_selectors()
     
     async def _wait_for_ready(self, timeout: int = 30):
         """Wait for ChatGPT interface to be ready."""
@@ -59,7 +61,30 @@ class ChatGPTInterface(BaseLLMInterface):
         print(f"[chatgpt] WARNING: Could not find input element. Current URL: {self.page.url}")
         print(f"[chatgpt] Page title: {await self.page.title()}")
         self._input_selector = None
-    
+
+    async def _check_selectors(self):
+        """Check critical selectors are present."""
+        await self.check_selector_health({
+            "input": [
+                "#prompt-textarea",
+                "textarea[placeholder*='Message']",
+                "textarea[data-id='root']",
+                "div[contenteditable='true']",
+            ],
+            "send_button": [
+                "[data-testid='send-button']",
+                "button[aria-label*='Send']",
+                "button[type='submit']",
+            ],
+            "model_switcher": [
+                "[data-testid='model-switcher-dropdown-button']",
+            ],
+            "response_area": [
+                "[data-message-author-role='assistant']",
+                ".markdown",
+            ],
+        })
+
     async def start_new_chat(self):
         """Start a new conversation."""
         try:
