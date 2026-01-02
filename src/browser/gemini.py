@@ -91,6 +91,11 @@ class GeminiInterface(BaseLLMInterface):
         1. Model selector dropdown (top of chat) -> Select "Thinking" model variant
         2. Or "Think deeper" toggle if available
         """
+        # Prevent re-enabling if already enabled (avoids double "new chat" clicks)
+        if self.deep_think_enabled:
+            logger.info("[gemini] Deep Think already enabled, skipping")
+            return True
+
         try:
             # Click the "Tools" button to open the tools panel
             tools_opened = False
@@ -116,41 +121,51 @@ class GeminiInterface(BaseLLMInterface):
                 return False
 
             # Look for Deep Think option using exact text match
+            deep_think_clicked = False
             try:
                 deep_think_elem = await self.page.query_selector("text='Deep Think'")
                 if deep_think_elem:
                     is_visible = await deep_think_elem.is_visible()
                     if is_visible:
                         await deep_think_elem.click()
-                        await asyncio.sleep(1)
-                        await self._handle_mode_change_confirmation()
-                        logger.info("[gemini] Deep Think enabled")
-                        self.deep_think_enabled = True
-                        return True
-            except Exception:
-                pass
+                        deep_think_clicked = True
+                        logger.info("[gemini] Clicked Deep Think option")
+            except Exception as e:
+                logger.debug(f"[gemini] First Deep Think selector failed: {e}")
 
             # Fallback: search elements for exact "Deep Think" text
-            all_elements = await self.page.query_selector_all("button, span, div, li, [role='menuitem'], [role='option']")
-            for elem in all_elements:
-                try:
-                    is_visible = await elem.is_visible()
-                    if not is_visible:
+            if not deep_think_clicked:
+                all_elements = await self.page.query_selector_all("button, span, div, li, [role='menuitem'], [role='option']")
+                for elem in all_elements:
+                    try:
+                        is_visible = await elem.is_visible()
+                        if not is_visible:
+                            continue
+                        text = (await elem.inner_text() or "").strip()
+
+                        if text.lower() == 'deep think':
+                            await elem.click()
+                            deep_think_clicked = True
+                            logger.info("[gemini] Clicked Deep Think option (fallback)")
+                            break
+                    except Exception:
                         continue
-                    text = (await elem.inner_text() or "").strip()
 
-                    if text.lower() == 'deep think':
-                        await elem.click()
-                        await asyncio.sleep(1)
-                        await self._handle_mode_change_confirmation()
-                        logger.info("[gemini] Deep Think enabled")
-                        self.deep_think_enabled = True
-                        return True
-                except Exception:
-                    continue
+            if not deep_think_clicked:
+                logger.warning("[gemini] Deep Think option not found")
+                return False
 
-            logger.warning("[gemini] Deep Think option not found")
-            return False
+            # Handle confirmation dialog (only once, after clicking Deep Think)
+            await asyncio.sleep(1)
+            await self._handle_mode_change_confirmation()
+
+            # Wait for new chat to fully load after confirmation
+            await asyncio.sleep(2)
+
+            # Mark as enabled BEFORE any code that might fail
+            self.deep_think_enabled = True
+            logger.info("[gemini] Deep Think enabled")
+            return True
 
         except Exception as e:
             logger.error(f"[gemini] Could not enable Deep Think: {e}")
@@ -208,6 +223,9 @@ class GeminiInterface(BaseLLMInterface):
     async def start_new_chat(self):
         """Start a new conversation."""
         try:
+            # Reset Deep Think state - new chat starts in standard mode
+            self.deep_think_enabled = False
+
             # Just navigate to app root - more reliable than trying to click buttons
             await self.page.goto("https://gemini.google.com/app")
             await asyncio.sleep(2)
