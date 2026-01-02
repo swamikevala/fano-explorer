@@ -156,8 +156,14 @@ chunking:
   mode: "atomic"
   # Filter out insights below this confidence: "high", "medium", or "low"
   min_confidence_to_keep: "low"
-  # Maximum insights to extract per thread
-  max_insights_per_thread: 10
+  # Maximum insights to extract per thread (per LLM in panel mode)
+  max_insights_per_thread: 15
+  # Maximum final insights after consolidation
+  max_final_insights: 10
+
+  # Panel-based extraction (recommended): all 3 LLMs propose independently, then consolidate
+  # This captures cross-domain bridges that a single conservative LLM might miss
+  use_panel_extraction: true
 
 # Dependency resolution settings
 dependencies:

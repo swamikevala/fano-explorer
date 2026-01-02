@@ -3,10 +3,249 @@ Extraction prompts for atomic chunking.
 
 Prompts designed to extract individual atomic insights (1-3 sentences each)
 from exploration threads, with dependency tracking.
+
+Panel-based extraction uses all 3 LLMs to propose aphorisms independently,
+then consolidates them to capture diverse perspectives and cross-domain bridges.
 """
 
 from datetime import datetime
 
+
+# =============================================================================
+# PANEL-BASED EXTRACTION PROMPTS (NEW)
+# =============================================================================
+
+def build_panel_extraction_prompt(
+    thread_context: str,
+    blessed_chunks_summary: str,
+    max_insights: int = 15,
+) -> str:
+    """
+    Build the panel extraction prompt emphasizing cross-domain bridges.
+
+    This prompt is sent to all 3 LLMs independently. It emphasizes:
+    - Cross-domain structural correspondences
+    - Intuitive leaps and speculative connections
+    - Novel framings even without rigorous justification
+    """
+    date_prefix = f"[FANO {datetime.now().strftime('%m-%d')}]"
+
+    return f"""{date_prefix} Extract the most INTERESTING and NOVEL ideas from this exploration.
+
+YOUR MISSION: Find ideas that BRIDGE DIFFERENT DOMAINS with structural correspondences.
+
+WHAT TO LOOK FOR:
+1. CROSS-DOMAIN BRIDGES - connections between:
+   - Mathematics (Fano plane, group theory, geometry) ↔ Yogic systems (chakras, nadis, tattvas)
+   - Mathematics ↔ Sanskrit grammar (Maheshwara Sutras, phonetics)
+   - Mathematics ↔ Indian music (swaras, shrutis, ragas)
+   - Mathematics ↔ Tantric/cosmological structures (dharanas, lokas)
+   - Any unexpected structural parallels between traditions
+
+2. NUMERICAL CORRESPONDENCES that feel meaningful:
+   - Why 7? Why 12? Why 72? Why 112?
+   - Numbers appearing across multiple traditions
+   - Multiplicative/divisive relationships (7×3=21, 7×12=84, etc.)
+
+3. INTUITIVE LEAPS - ideas that:
+   - Feel like they COULD be true even if not proven
+   - Suggest a deeper hidden structure
+   - Would be exciting if they turned out to be correct
+
+EXAMPLES OF WHAT TO EXTRACT:
+✓ "The 112 dharanas may map to 28 Fano-triangles × 4 complementary points"
+✓ "The 7 chakras mirror the 7 points of the Fano plane, with nadis as lines"
+✓ "The 22 shrutis correspond to the 21 flags of Fano plus a silent point"
+✓ "PSL(2,7) acting on the Fano plane yields the same orbit structure as..."
+
+DO NOT FILTER OUT ideas just because:
+- They are speculative or conjectural
+- They can't be rigorously proven yet
+- They bridge "unrelated" domains
+- They sound mystical or philosophical
+
+DO FILTER OUT:
+- Pure restatements of known mathematics with no cross-domain connection
+- Vague observations with no specific structural claim
+- Ideas already in the blessed axioms below
+
+BLESSED AXIOMS (already established):
+{blessed_chunks_summary if blessed_chunks_summary else "(none yet)"}
+
+=== EXPLORATION CONTENT ===
+{thread_context}
+
+=== OUTPUT FORMAT ===
+Extract up to {max_insights} insights. Format EXACTLY as:
+
+===
+INSIGHT: [the aphorism - 1-3 sentences, specific structural claim]
+DOMAINS: [which domains this bridges, e.g. "fano, chakras" or "group-theory, music"]
+NOVELTY: [high/medium/low - how unexpected is this connection?]
+INTUITION: [one sentence on why this feels true or meaningful]
+===
+(continue for each insight worth extracting)
+
+If nothing interesting found:
+===
+NO_INSIGHTS: [explanation]
+===
+"""
+
+
+def build_consolidation_prompt(
+    gemini_proposals: str,
+    chatgpt_proposals: str,
+    claude_proposals: str,
+    blessed_chunks_summary: str,
+    max_final: int = 10,
+) -> str:
+    """
+    Build prompt for consolidating proposals from all 3 LLMs.
+
+    Claude Opus reviews all proposals and:
+    - Merges similar ideas (keeping best articulation)
+    - Preserves ALL distinct cross-domain bridges
+    - Removes true duplicates
+    - Formats final list
+    """
+    return f"""You are consolidating insight proposals from three LLMs exploring mathematical
+connections across domains. Your job is to create the FINAL list of aphorisms.
+
+GEMINI'S PROPOSALS:
+{gemini_proposals}
+
+CHATGPT'S PROPOSALS:
+{chatgpt_proposals}
+
+CLAUDE'S PROPOSALS:
+{claude_proposals}
+
+ALREADY BLESSED (do not duplicate):
+{blessed_chunks_summary if blessed_chunks_summary else "(none yet)"}
+
+YOUR TASK:
+1. MERGE similar proposals - keep the clearest/most precise articulation
+2. PRESERVE all distinct cross-domain bridges (even if only one LLM proposed it)
+3. REMOVE true duplicates (same core idea, just reworded)
+4. REMOVE ideas that duplicate blessed axioms
+5. PRIORITIZE novel cross-domain connections over pure-math insights
+
+IMPORTANT:
+- If two LLMs proposed similar ideas, this suggests it's worth keeping
+- If only one LLM proposed something unusual, it might be the most interesting
+- Err on the side of KEEPING rather than discarding
+- The review panel will filter later - your job is to not lose good ideas
+
+OUTPUT FORMAT - extract up to {max_final} consolidated insights:
+
+===
+INSIGHT: [final articulation - 1-3 sentences]
+CONFIDENCE: [high/medium/low]
+TAGS: [comma-separated domain tags]
+PROPOSED_BY: [gemini/chatgpt/claude or "multiple"]
+DEPENDS_ON: [blessed axiom IDs if any, or "none"]
+===
+(continue for each distinct insight)
+"""
+
+
+def parse_panel_extraction_response(response: str) -> list[dict]:
+    """
+    Parse a panel extraction response (from individual LLM).
+
+    Returns list of proposed insights with domains, novelty, intuition.
+    """
+    insights = []
+
+    if "NO_INSIGHTS:" in response:
+        return []
+
+    blocks = response.split("===")
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        insight_data = {}
+        lines = block.split("\n")
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("INSIGHT:"):
+                insight_data["insight"] = line[8:].strip()
+            elif line.startswith("DOMAINS:"):
+                domains_str = line[8:].strip()
+                insight_data["domains"] = [d.strip() for d in domains_str.split(",") if d.strip()]
+            elif line.startswith("NOVELTY:"):
+                insight_data["novelty"] = line[8:].strip().lower()
+            elif line.startswith("INTUITION:"):
+                insight_data["intuition"] = line[10:].strip()
+
+        if insight_data.get("insight"):
+            # Set defaults
+            insight_data.setdefault("domains", [])
+            insight_data.setdefault("novelty", "medium")
+            insight_data.setdefault("intuition", "")
+            insights.append(insight_data)
+
+    return insights
+
+
+def parse_consolidation_response(response: str) -> list[dict]:
+    """
+    Parse the consolidation response into final insights.
+    """
+    insights = []
+
+    blocks = response.split("===")
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        insight_data = {}
+        lines = block.split("\n")
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("INSIGHT:"):
+                insight_data["insight"] = line[8:].strip()
+            elif line.startswith("CONFIDENCE:"):
+                insight_data["confidence"] = line[11:].strip().lower()
+            elif line.startswith("TAGS:"):
+                tags_str = line[5:].strip()
+                insight_data["tags"] = [t.strip() for t in tags_str.split(",") if t.strip()]
+            elif line.startswith("PROPOSED_BY:"):
+                insight_data["proposed_by"] = line[12:].strip().lower()
+            elif line.startswith("DEPENDS_ON:"):
+                deps_str = line[11:].strip()
+                if deps_str.lower() == "none":
+                    insight_data["depends_on"] = []
+                else:
+                    insight_data["depends_on"] = [d.strip() for d in deps_str.split(",") if d.strip()]
+
+        if insight_data.get("insight"):
+            insight_data.setdefault("confidence", "medium")
+            insight_data.setdefault("tags", [])
+            insight_data.setdefault("proposed_by", "unknown")
+            insight_data.setdefault("depends_on", [])
+            insights.append(insight_data)
+
+    return insights
+
+
+# =============================================================================
+# ORIGINAL SINGLE-LLM EXTRACTION (kept for fallback)
+# =============================================================================
 
 def build_extraction_prompt(
     thread_context: str,

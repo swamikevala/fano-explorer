@@ -37,7 +37,11 @@ from models import (
     AxiomStore, BlessedInsight,
 )
 from storage.db import Database
-from chunking import AtomicExtractor, AtomicInsight, InsightStatus, get_dedup_checker, DeduplicationChecker
+from chunking import (
+    AtomicExtractor, AtomicInsight, InsightStatus,
+    get_dedup_checker, DeduplicationChecker,
+    PanelExtractor, get_panel_extractor,
+)
 from review_panel import AutomatedReviewer
 from augmentation import get_augmenter, Augmenter
 
@@ -75,8 +79,13 @@ class Orchestrator:
         self.running = False
         self.config = CONFIG["orchestration"]
 
-        # Atomic chunking extractor
+        # Atomic chunking extractors
         self.extractor = AtomicExtractor(data_dir=self.data_dir, config=CONFIG)
+        self.panel_extractor = PanelExtractor(data_dir=self.data_dir, config=CONFIG)
+
+        # Use panel extraction by default (can be overridden in config)
+        chunking_config = CONFIG.get("chunking", {})
+        self.use_panel_extraction = chunking_config.get("use_panel_extraction", True)
 
         # Automated reviewer (initialized after browsers connect)
         self.reviewer: Optional[AutomatedReviewer] = None
@@ -845,26 +854,35 @@ CONTENT:
             logger.info(f"[{thread.id}] Already extracted, skipping")
             return
 
-        # Get Claude reviewer for extraction (preferred author)
+        # Get Claude reviewer for extraction
         claude_reviewer = None
         if self.reviewer:
             claude_reviewer = self.reviewer.claude_reviewer
-
-        author = "Claude Opus" if claude_reviewer and claude_reviewer.is_available() else model_name
-        logger.info(f"[{thread.id}] Starting atomic extraction with {author}")
 
         try:
             # Get blessed insights for dependency context
             blessed_insights = self._get_blessed_insights()
 
-            # Extract atomic insights (Claude preferred, fallback to browser model)
-            insights = await self.extractor.extract_from_thread(
-                thread=thread,
-                claude_reviewer=claude_reviewer,
-                fallback_model=model,
-                fallback_model_name=model_name,
-                blessed_insights=blessed_insights,
-            )
+            # Choose extraction method based on config
+            if self.use_panel_extraction:
+                logger.info(f"[{thread.id}] Starting PANEL extraction (all 3 LLMs)")
+                insights = await self.panel_extractor.extract_from_thread(
+                    thread=thread,
+                    gemini=self.gemini,
+                    chatgpt=self.chatgpt,
+                    claude_reviewer=claude_reviewer,
+                    blessed_insights=blessed_insights,
+                )
+            else:
+                author = "Claude Opus" if claude_reviewer and claude_reviewer.is_available() else model_name
+                logger.info(f"[{thread.id}] Starting single-LLM extraction with {author}")
+                insights = await self.extractor.extract_from_thread(
+                    thread=thread,
+                    claude_reviewer=claude_reviewer,
+                    fallback_model=model,
+                    fallback_model_name=model_name,
+                    blessed_insights=blessed_insights,
+                )
 
             if not insights:
                 logger.info(f"[{thread.id}] No insights extracted")

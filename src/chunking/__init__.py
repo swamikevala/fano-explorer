@@ -3,6 +3,9 @@ Atomic chunking module.
 
 Extracts multiple atomic insights (1-3 sentences each) from exploration threads,
 with dependency tracking to blessed axioms.
+
+Panel-based extraction uses all 3 LLMs to propose insights independently,
+then consolidates to capture diverse perspectives and cross-domain bridges.
 """
 
 from .models import (
@@ -13,6 +16,7 @@ from .models import (
     VersionedInsight,
 )
 from .extractor import AtomicExtractor
+from .panel_extractor import PanelExtractor, get_panel_extractor
 from .dependencies import resolve_dependencies, find_keyword_matches
 from .prompts import (
     build_refinement_prompt,
@@ -34,8 +38,10 @@ __all__ = [
     "InsightVersion",
     "Refinement",
     "VersionedInsight",
-    # Extractor
+    # Extractors
     "AtomicExtractor",
+    "PanelExtractor",
+    "get_panel_extractor",
     # Dependencies
     "resolve_dependencies",
     "find_keyword_matches",
