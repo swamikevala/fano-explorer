@@ -772,16 +772,15 @@ CONTENT:
         logger.info(f"[{thread.id}] Starting atomic extraction with {model_name}")
 
         try:
-            # Get blessed axioms summary for dependency context
-            blessed_summary = self._get_blessed_summary()
+            # Get blessed insights for dependency context
             blessed_insights = self._get_blessed_insights()
 
             # Extract atomic insights
             insights = await self.extractor.extract_from_thread(
                 thread=thread,
-                extraction_model=model_name,
                 model=model,
-                blessed_axioms_summary=blessed_summary,
+                model_name=model_name,
+                blessed_insights=blessed_insights,
             )
 
             if not insights:
