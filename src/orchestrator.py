@@ -33,7 +33,7 @@ from models import (
     AxiomStore, BlessedInsight,
 )
 from storage.db import Database
-from chunking import AtomicExtractor, AtomicInsight, InsightStatus
+from chunking import AtomicExtractor, AtomicInsight, InsightStatus, get_dedup_checker, DeduplicationChecker
 from review_panel import AutomatedReviewer
 from augmentation import get_augmenter, Augmenter
 
@@ -79,6 +79,9 @@ class Orchestrator:
 
         # Augmenter for blessed insights (initialized after reviewer)
         self.augmenter: Optional[Augmenter] = None
+
+        # Deduplication checker (initialized after reviewer, uses same Claude instance)
+        self.dedup_checker: Optional[DeduplicationChecker] = None
         
     async def run(self, process_backlog_first: bool = True):
         """Main exploration loop.
@@ -218,6 +221,17 @@ class Orchestrator:
                     )
                     if self.augmenter:
                         logger.info("Initialized augmenter for blessed insights")
+
+                # Initialize deduplication checker (uses reviewer's Claude instance)
+                if CONFIG.get("deduplication", {}).get("enabled", True):
+                    self.dedup_checker = get_dedup_checker(
+                        claude_reviewer=self.reviewer.claude_reviewer,
+                        config=CONFIG,
+                    )
+                    # Load existing blessed insights into the checker
+                    blessed_insights = self._get_blessed_insights()
+                    self.dedup_checker.load_known_insights(blessed_insights)
+                    logger.info(f"Initialized deduplication checker with {len(blessed_insights)} known insights")
 
             except Exception as e:
                 logger.warning(f"Could not initialize review panel: {e}")
@@ -852,6 +866,36 @@ CONTENT:
 
             logger.info(f"[{thread.id}] Extracted {len(insights)} atomic insights")
 
+            # Deduplicate insights against known blessed insights
+            if self.dedup_checker:
+                unique_insights = []
+                duplicate_count = 0
+
+                for insight in insights:
+                    is_dup, dup_of_id = await self.dedup_checker.is_duplicate(
+                        new_text=insight.insight,
+                        new_id=insight.id,
+                    )
+                    if is_dup:
+                        logger.info(f"[{thread.id}] Skipping duplicate insight [{insight.id}] (similar to {dup_of_id})")
+                        duplicate_count += 1
+                    else:
+                        unique_insights.append(insight)
+                        # Add to known set to catch duplicates within same batch
+                        self.dedup_checker.add_known_insight(insight.id, insight.insight)
+
+                if duplicate_count > 0:
+                    logger.info(f"[{thread.id}] Filtered out {duplicate_count} duplicate insights")
+
+                insights = unique_insights
+
+            if not insights:
+                logger.info(f"[{thread.id}] All insights were duplicates")
+                thread.chunks_extracted = True
+                thread.extraction_note = "All insights were duplicates of existing ones"
+                thread.save(self.data_dir)
+                return
+
             # Save insights to data/chunks/
             chunks_dir = self.data_dir / "chunks"
             chunks_dir.mkdir(parents=True, exist_ok=True)
@@ -1028,6 +1072,10 @@ CONTENT:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         logger.info(f"Blessed insight [{insight.id}] added to axiom store")
+
+        # Add to deduplication checker for future duplicate detection
+        if self.dedup_checker:
+            self.dedup_checker.add_known_insight(insight.id, insight.insight)
 
         # Augment the blessed insight (generate diagrams, tables, proofs, code)
         if self.augmenter:

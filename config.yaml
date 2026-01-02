@@ -122,6 +122,17 @@ dependencies:
   # Flag during review if insight has unresolved dependencies
   warn_on_unresolved: true
 
+# Deduplication settings (prevents near-duplicate insights)
+deduplication:
+  # Enable deduplication checking
+  enabled: true
+  # Keyword Jaccard similarity threshold for flagging potential duplicates
+  keyword_threshold: 0.6
+  # Concept overlap threshold (domain-specific terms)
+  concept_threshold: 0.7
+  # Use LLM to confirm duplicates (slower but more accurate)
+  use_llm_confirmation: true
+
 # Automated review panel settings
 review_panel:
   # Enable automated LLM review panel

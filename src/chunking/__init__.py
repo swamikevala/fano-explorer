@@ -20,6 +20,12 @@ from .prompts import (
     parse_refinement_response,
     parse_post_refinement_review,
 )
+from .deduplication import (
+    DeduplicationChecker,
+    get_dedup_checker,
+    is_likely_duplicate,
+    calculate_keyword_similarity,
+)
 
 __all__ = [
     # Models
@@ -33,6 +39,11 @@ __all__ = [
     # Dependencies
     "resolve_dependencies",
     "find_keyword_matches",
+    # Deduplication
+    "DeduplicationChecker",
+    "get_dedup_checker",
+    "is_likely_duplicate",
+    "calculate_keyword_similarity",
     # Refinement prompts
     "build_refinement_prompt",
     "build_post_refinement_review_prompt",
