@@ -264,15 +264,20 @@ class Orchestrator:
                 mode_key = "gemini_deep_think" if model_name == "gemini" else "chatgpt_pro"
                 deep_mode_tracker.record_usage(mode_key)
 
+            # Extract only structured sections, stripping preamble and recaps
+            clean_response = self._extract_structured_response(
+                response, ['NEW_INSIGHTS', 'CONNECTIONS', 'QUESTIONS']
+            )
+
             thread.add_exchange(
                 role=ExchangeRole.EXPLORER,
                 model=model_name,
                 prompt=prompt,
-                response=response,
+                response=clean_response,
                 deep_mode_used=deep_mode_used,
             )
 
-            logger.info(f"Exploration complete, {len(response)} chars" + (" [DEEP]" if deep_mode_used else ""))
+            logger.info(f"Exploration complete, {len(response)} -> {len(clean_response)} chars" + (" [DEEP]" if deep_mode_used else ""))
 
         except Exception as e:
             logger.error(f"Exploration failed: {e}")
@@ -317,15 +322,20 @@ class Orchestrator:
                 mode_key = "gemini_deep_think" if critique_model_name == "gemini" else "chatgpt_pro"
                 deep_mode_tracker.record_usage(mode_key)
 
+            # Extract only structured sections, stripping preamble and recaps
+            clean_response = self._extract_structured_response(
+                response, ['CRITICAL_ISSUES', 'PROMISING_DIRECTIONS', 'PROBING_QUESTIONS']
+            )
+
             thread.add_exchange(
                 role=ExchangeRole.CRITIC,
                 model=critique_model_name,
                 prompt=prompt,
-                response=response,
+                response=clean_response,
                 deep_mode_used=deep_mode_used,
             )
 
-            logger.info(f"Critique complete, {len(response)} chars" + (" [DEEP]" if deep_mode_used else ""))
+            logger.info(f"Critique complete, {len(response)} -> {len(clean_response)} chars" + (" [DEEP]" if deep_mode_used else ""))
 
         except Exception as e:
             logger.error(f"Critique failed: {e}")
@@ -374,7 +384,27 @@ class Orchestrator:
         else:
             prompt_parts.append("Begin your exploration. What mathematical structures might connect these domains?")
             prompt_parts.append("Focus especially on explaining why the numbers appear as they do.")
-        
+
+        # Add anti-bloat instructions with structured format
+        prompt_parts.extend([
+            "",
+            "=== RESPONSE FORMAT ===",
+            "IMPORTANT: Do not summarize or recap previous discussion.",
+            "State only NEW insights. Assume full context is available.",
+            "Skip any preamble - go straight to the sections.",
+            "",
+            "You MUST structure your response EXACTLY as:",
+            "",
+            "[NEW_INSIGHTS]",
+            "- (bullet points of genuinely new ideas or mathematical structures)",
+            "",
+            "[CONNECTIONS]",
+            "- (new connections discovered between domains)",
+            "",
+            "[QUESTIONS]",
+            "- (open questions worth exploring next)",
+        ])
+
         return "\n".join(prompt_parts)
     
     def _build_critique_prompt(self, thread: ExplorationThread) -> str:
@@ -408,8 +438,22 @@ Signs of invention (bad):
 - "It feels clever but arbitrary"
 
 Be constructive but rigorous. The goal is truth, not validation.
-Push toward depth, not toward any particular application."""
-        
+Push toward depth, not toward any particular application.
+
+=== RESPONSE FORMAT ===
+IMPORTANT: Do not summarize or recap previous discussion.
+State only NEW critiques and questions. Assume full context is available.
+
+Structure your response as:
+[CRITICAL_ISSUES]
+(Genuine problems with the reasoning - be specific)
+
+[PROMISING_DIRECTIONS]
+(What's working and worth pursuing deeper)
+
+[PROBING_QUESTIONS]
+(Questions that would test or deepen the ideas)"""
+
         return prompt
     
     def _is_chunk_ready(self, thread: ExplorationThread) -> bool:
@@ -552,14 +596,56 @@ CONTENT:
     
     def _parse_synthesis(self, response: str, thread: ExplorationThread) -> tuple[str, str, str]:
         """Parse synthesis response into title, summary, content."""
-        
+
         # Try to extract structured parts
         title_match = re.search(r'TITLE:\s*(.+?)(?:\n|SUMMARY:)', response, re.DOTALL)
         summary_match = re.search(r'SUMMARY:\s*(.+?)(?:\n|CONTENT:)', response, re.DOTALL)
         content_match = re.search(r'CONTENT:\s*(.+)', response, re.DOTALL)
-        
+
         title = title_match.group(1).strip() if title_match else f"Exploration {thread.id}"
         summary = summary_match.group(1).strip() if summary_match else "Mathematical exploration synthesis"
         content = content_match.group(1).strip() if content_match else response
-        
+
         return title, summary, content
+
+    def _extract_structured_response(self, response: str, sections: list[str]) -> str:
+        """
+        Extract only the structured sections from a response, stripping preamble.
+
+        Args:
+            response: Full LLM response text
+            sections: List of section names to extract (e.g. ['NEW_INSIGHTS', 'CONNECTIONS'])
+
+        Returns:
+            Cleaned response with only the structured sections
+        """
+        # Build pattern to find all sections
+        section_pattern = r'\[(' + '|'.join(sections) + r')\]'
+
+        # Find the first section marker - everything before it is preamble
+        first_match = re.search(section_pattern, response)
+        if not first_match:
+            # No structured sections found, return original (but log warning)
+            logger.warning("No structured sections found in response, keeping original")
+            return response
+
+        # Extract from first section onwards
+        structured_part = response[first_match.start():]
+
+        # Clean up: remove any trailing content after the last section's content
+        # by keeping only content up to any obvious sign-off phrases
+        signoff_patterns = [
+            r'\n\nLet me know',
+            r'\n\nWould you like',
+            r'\n\nShall I',
+            r'\n\nI hope this',
+            r'\n\nIn summary,',  # Catch summary attempts
+            r'\n\nTo summarize,',
+            r'\n\nOverall,',
+        ]
+        for pattern in signoff_patterns:
+            match = re.search(pattern, structured_part, re.IGNORECASE)
+            if match:
+                structured_part = structured_part[:match.start()]
+
+        return structured_part.strip()
