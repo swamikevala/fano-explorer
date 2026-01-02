@@ -158,29 +158,52 @@ class GeminiInterface(BaseLLMInterface):
 
     async def _handle_mode_change_confirmation(self):
         """Handle any confirmation dialogs when switching modes."""
-        confirmation_selectors = [
-            "button:has-text('Start new chat')",
-            "button:has-text('New chat')",
-            "button:has-text('Confirm')",
-            "button:has-text('Continue')",
-            "button:has-text('OK')",
-            "button:has-text('Start')",
-            "[data-test-id='confirm-new-chat']",
+        await asyncio.sleep(0.5)  # Wait for dialog to appear
+
+        # First, look for any visible dialog/modal
+        dialog_selectors = [
+            "[role='dialog']",
+            "[role='alertdialog']",
+            ".modal",
+            ".dialog",
+            "mat-dialog-container",
         ]
 
-        for selector in confirmation_selectors:
+        dialog_found = False
+        for selector in dialog_selectors:
             try:
-                btn = await self.page.query_selector(selector)
-                if btn:
-                    is_visible = await btn.is_visible()
-                    if is_visible:
-                        text = await btn.inner_text()
-                        logger.info(f"[gemini] Clicking confirmation: '{text[:30]}'")
+                dialog = await self.page.query_selector(selector)
+                if dialog and await dialog.is_visible():
+                    dialog_found = True
+                    logger.info(f"[gemini] Found confirmation dialog: {selector}")
+                    break
+            except Exception:
+                continue
+
+        # Button text patterns to look for (case insensitive search)
+        confirm_patterns = [
+            'start new chat', 'new chat', 'confirm', 'continue',
+            'ok', 'start', 'yes', 'proceed', 'got it'
+        ]
+
+        # Find and click any matching button
+        buttons = await self.page.query_selector_all("button")
+        for btn in buttons:
+            try:
+                if not await btn.is_visible():
+                    continue
+                text = (await btn.inner_text() or "").strip().lower()
+                for pattern in confirm_patterns:
+                    if pattern in text:
+                        logger.info(f"[gemini] Clicking confirmation button: '{text}'")
                         await btn.click()
                         await asyncio.sleep(1)
                         return
             except Exception:
                 continue
+
+        if dialog_found:
+            logger.warning("[gemini] Dialog found but couldn't find confirm button")
     
     async def start_new_chat(self):
         """Start a new conversation."""

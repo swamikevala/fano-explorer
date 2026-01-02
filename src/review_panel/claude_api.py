@@ -136,7 +136,11 @@ class ClaudeReviewer:
         try:
             self._ensure_client()
             return True
-        except (ValueError, ImportError):
+        except (ValueError, ImportError) as e:
+            logger.warning(f"[claude] is_available check failed: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"[claude] Unexpected error in is_available: {e}")
             return False
 
 

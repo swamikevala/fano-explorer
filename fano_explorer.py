@@ -18,15 +18,15 @@ import io
 from pathlib import Path
 
 # Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
-except ImportError:
-    pass  # dotenv not installed, rely on system env vars
-except Exception as e:
-    print(f"Warning: Could not load .env: {e}")
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    # Manual loading to avoid any dotenv issues
+    with open(_env_path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, value = line.split('=', 1)
+                os.environ[key] = value
 
 # Force UTF-8 encoding on Windows
 if sys.platform == "win32":
