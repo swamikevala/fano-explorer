@@ -27,8 +27,8 @@ models:
         - "You've reached the limit"
         - "Usage cap reached"
         - "try again later"
-    # How long to wait for response (seconds)
-    response_timeout: 300
+    # How long to wait for response (seconds) - Pro mode can be slow
+    response_timeout: 3600
     
   gemini:
     url: "https://gemini.google.com"
@@ -41,7 +41,7 @@ models:
         - "unavailable"
         - "try again tomorrow"
         - "quota"
-    response_timeout: 600  # Deep Think can be slow
+    response_timeout: 3600  # Deep Think can be slow
 
 # Model selection weights (higher = more likely to be chosen)
 # Gemini tends to explore creatively, ChatGPT tends to critique rigorously
