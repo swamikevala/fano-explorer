@@ -80,6 +80,10 @@ class ExplorationThread:
     updated_at: datetime
     exchanges: list[Exchange] = field(default_factory=list)
     notes: str = ""  # Orchestrator notes
+
+    # Atomic chunking fields
+    chunks_extracted: bool = False  # True after atomic extraction complete
+    extraction_note: Optional[str] = None  # Note if no insights found
     
     @property
     def exchange_count(self) -> int:
@@ -156,6 +160,8 @@ class ExplorationThread:
             "updated_at": self.updated_at.isoformat(),
             "exchanges": [e.to_dict() for e in self.exchanges],
             "notes": self.notes,
+            "chunks_extracted": self.chunks_extracted,
+            "extraction_note": self.extraction_note,
         }
     
     @classmethod
@@ -170,6 +176,8 @@ class ExplorationThread:
             updated_at=datetime.fromisoformat(data["updated_at"]),
             exchanges=[Exchange.from_dict(e) for e in data["exchanges"]],
             notes=data.get("notes", ""),
+            chunks_extracted=data.get("chunks_extracted", False),
+            extraction_note=data.get("extraction_note"),
         )
     
     def save(self, base_dir: Path):

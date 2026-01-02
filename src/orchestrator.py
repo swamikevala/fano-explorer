@@ -33,6 +33,8 @@ from models import (
     AxiomStore, BlessedInsight,
 )
 from storage.db import Database
+from chunking import AtomicExtractor, AtomicInsight, InsightStatus
+from review_panel import AutomatedReviewer
 
 # Setup logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(
@@ -61,12 +63,18 @@ class Orchestrator:
         self.data_dir = Path(__file__).parent.parent / "data"
         self.db = Database(self.data_dir / "fano_explorer.db")
         self.axioms = AxiomStore(self.data_dir)
-        
+
         self.chatgpt: Optional[ChatGPTInterface] = None
         self.gemini: Optional[GeminiInterface] = None
-        
+
         self.running = False
         self.config = CONFIG["orchestration"]
+
+        # Atomic chunking extractor
+        self.extractor = AtomicExtractor(config=CONFIG)
+
+        # Automated reviewer (initialized after browsers connect)
+        self.reviewer: Optional[AutomatedReviewer] = None
         
     async def run(self):
         """Main exploration loop."""
@@ -110,6 +118,20 @@ class Orchestrator:
         except Exception as e:
             logger.warning(f"Could not connect to Gemini: {e}")
             self.gemini = None
+
+        # Initialize the automated reviewer with connected browsers
+        if CONFIG.get("review_panel", {}).get("enabled", False):
+            try:
+                self.reviewer = AutomatedReviewer(
+                    gemini_browser=self.gemini,
+                    chatgpt_browser=self.chatgpt,
+                    config=CONFIG,
+                    data_dir=self.data_dir,
+                )
+                logger.info("Initialized automated review panel")
+            except Exception as e:
+                logger.warning(f"Could not initialize review panel: {e}")
+                self.reviewer = None
     
     async def _disconnect_models(self):
         """Disconnect from browser interfaces."""
@@ -558,13 +580,17 @@ Structure your response as:
             
             # Save chunk
             chunk.save(self.data_dir)
-            
+
             # Mark thread as chunk-ready
             thread.status = ThreadStatus.CHUNK_READY
             thread.save(self.data_dir)
-            
+
             logger.info(f"Created chunk [{chunk.id}]: {chunk.title}")
-            
+
+            # Atomic extraction and review (if enabled)
+            if CONFIG.get("chunking", {}).get("mode") == "atomic":
+                await self._extract_and_review(thread, model_name, model)
+
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
     
@@ -649,3 +675,187 @@ CONTENT:
                 structured_part = structured_part[:match.start()]
 
         return structured_part.strip()
+
+    async def _extract_and_review(
+        self,
+        thread: ExplorationThread,
+        model_name: str,
+        model,
+    ):
+        """
+        Extract atomic insights from a thread and run automated review.
+
+        Args:
+            thread: The exploration thread to extract from
+            model_name: Name of the model to use for extraction
+            model: The model instance
+        """
+        if thread.chunks_extracted:
+            logger.info(f"[{thread.id}] Already extracted, skipping")
+            return
+
+        logger.info(f"[{thread.id}] Starting atomic extraction with {model_name}")
+
+        try:
+            # Get blessed axioms summary for dependency context
+            blessed_summary = self._get_blessed_summary()
+            blessed_insights = self._get_blessed_insights()
+
+            # Extract atomic insights
+            insights = await self.extractor.extract_from_thread(
+                thread=thread,
+                extraction_model=model_name,
+                model=model,
+                blessed_axioms_summary=blessed_summary,
+            )
+
+            if not insights:
+                logger.info(f"[{thread.id}] No insights extracted")
+                thread.chunks_extracted = True
+                thread.extraction_note = "No insights met extraction criteria"
+                thread.save(self.data_dir)
+                return
+
+            logger.info(f"[{thread.id}] Extracted {len(insights)} atomic insights")
+
+            # Save insights to data/chunks/
+            chunks_dir = self.data_dir / "chunks"
+            chunks_dir.mkdir(parents=True, exist_ok=True)
+
+            for insight in insights:
+                insight.save(chunks_dir)
+
+            # Run automated review if enabled
+            if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
+                await self._review_insights(insights, blessed_summary)
+
+            # Mark thread as extracted
+            thread.chunks_extracted = True
+            thread.save(self.data_dir)
+
+            logger.info(f"[{thread.id}] Extraction and review complete")
+
+        except Exception as e:
+            logger.error(f"[{thread.id}] Extraction failed: {e}")
+            thread.extraction_note = f"Extraction error: {str(e)}"
+            thread.save(self.data_dir)
+
+    async def _review_insights(
+        self,
+        insights: list[AtomicInsight],
+        blessed_summary: str,
+    ):
+        """
+        Run automated review on extracted insights.
+
+        Args:
+            insights: List of AtomicInsight to review
+            blessed_summary: Summary of blessed axioms for context
+        """
+        logger.info(f"Starting automated review of {len(insights)} insights")
+
+        chunks_dir = self.data_dir / "chunks"
+
+        for insight in insights:
+            try:
+                logger.info(f"Reviewing insight [{insight.id}]")
+
+                review = await self.reviewer.review_insight(
+                    chunk_id=insight.id,
+                    insight_text=insight.insight,
+                    confidence=insight.confidence,
+                    tags=insight.tags,
+                    dependencies=insight.depends_on,
+                    blessed_axioms_summary=blessed_summary,
+                )
+
+                # Get outcome action
+                action = self.reviewer.get_outcome_action(review)
+                logger.info(f"[{insight.id}] Review outcome: {review.final_rating} ({action})")
+
+                # Apply rating to insight
+                insight.rating = review.final_rating
+                insight.is_disputed = review.is_disputed
+                insight.reviewed_at = review.reviewed_at
+
+                # Update status based on rating
+                if review.final_rating == "⚡":
+                    insight.status = InsightStatus.BLESSED
+                    # Add to blessed insights
+                    self._bless_insight(insight)
+                elif review.final_rating == "✗":
+                    insight.status = InsightStatus.REJECTED
+                else:
+                    insight.status = InsightStatus.INTERESTING
+
+                # Save updated insight
+                insight.save(chunks_dir)
+
+            except Exception as e:
+                logger.error(f"[{insight.id}] Review failed: {e}")
+                insight.status = InsightStatus.PENDING
+                insight.save(chunks_dir)
+
+    def _get_blessed_summary(self) -> str:
+        """Get a summary of blessed axioms/insights for prompts."""
+        # Use the axiom store's context method
+        return self.axioms.get_context_for_exploration()
+
+    def _get_blessed_insights(self) -> list[dict]:
+        """Get list of blessed insights for dependency matching."""
+        blessed = []
+
+        # Load from blessed_insights.json if exists
+        blessed_file = self.data_dir / "blessed_insights.json"
+        if blessed_file.exists():
+            import json
+            with open(blessed_file, encoding="utf-8") as f:
+                data = json.load(f)
+                blessed.extend(data.get("insights", []))
+
+        # Also include chunks with BLESSED status
+        chunks_dir = self.data_dir / "chunks"
+        if chunks_dir.exists():
+            for filepath in chunks_dir.glob("*.json"):
+                try:
+                    insight = AtomicInsight.load(filepath)
+                    if insight.status == InsightStatus.BLESSED:
+                        blessed.append({
+                            "id": insight.id,
+                            "text": insight.insight,
+                            "tags": insight.tags,
+                        })
+                except Exception:
+                    pass
+
+        return blessed
+
+    def _bless_insight(self, insight: AtomicInsight):
+        """Add an insight to the blessed insights store."""
+        import json
+
+        blessed_file = self.data_dir / "blessed_insights.json"
+
+        # Load existing
+        if blessed_file.exists():
+            with open(blessed_file, encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {"insights": []}
+
+        # Add new insight
+        data["insights"].append({
+            "id": insight.id,
+            "text": insight.insight,
+            "confidence": insight.confidence,
+            "tags": insight.tags,
+            "depends_on": insight.depends_on,
+            "source_thread_id": insight.source_thread_id,
+            "blessed_at": datetime.now().isoformat(),
+        })
+
+        # Save
+        with open(blessed_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Blessed insight [{insight.id}] added to axiom store")

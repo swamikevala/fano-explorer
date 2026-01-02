@@ -104,6 +104,54 @@ review_server:
   host: "127.0.0.1"
   port: 8765
 
+# Atomic chunking settings
+chunking:
+  # "atomic" extracts multiple insights per thread, "monolithic" is old behavior
+  mode: "atomic"
+  # Filter out insights below this confidence: "high", "medium", or "low"
+  min_confidence_to_keep: "low"
+  # Maximum insights to extract per thread
+  max_insights_per_thread: 10
+
+# Dependency resolution settings
+dependencies:
+  # Keyword overlap threshold for matching deps to blessed chunks
+  semantic_match_threshold: 0.5
+  # Maximum blessed insights to include in extraction prompt
+  max_blessed_in_prompt: 20
+  # Flag during review if insight has unresolved dependencies
+  warn_on_unresolved: true
+
+# Automated review panel settings
+review_panel:
+  # Enable automated LLM review panel
+  enabled: true
+  # Environment variable containing Claude API key
+  claude_api_key_env: "ANTHROPIC_API_KEY"
+  # Claude model to use
+  claude_model: "claude-sonnet-4-20250514"
+
+  # Round 1: Independent review (standard modes)
+  round1:
+    use_deep_modes: false
+
+  # Round 2: Deep analysis (deep think modes)
+  round2:
+    use_deep_modes: true
+
+  # Round 3: Structured deliberation
+  round3:
+    enabled: true
+    max_exchanges: 3
+
+  # Outcome handling
+  outcomes:
+    unanimous_bless: "auto_bless"
+    unanimous_reject: "auto_reject"
+    unanimous_uncertain: "needs_development"
+    disputed_majority_bless: "bless_with_flag"
+    disputed_majority_reject: "reject_with_flag"
+
 # Logging
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
