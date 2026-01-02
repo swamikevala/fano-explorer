@@ -9,11 +9,14 @@ Handles interaction with Gemini web interface, including:
 """
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Optional
 
 from .base import BaseLLMInterface, rate_tracker
 from .model_selector import deep_mode_tracker
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiInterface(BaseLLMInterface):
@@ -83,102 +86,101 @@ class GeminiInterface(BaseLLMInterface):
         """
         Enable Deep Think mode if available.
         Returns True if successfully enabled.
-        Note: This is specifically Deep Think, NOT Deep Research (which is different).
-        Requires clicking Tools button first, then selecting DeepThink.
+
+        Gemini's thinking mode is accessed via:
+        1. Model selector dropdown (top of chat) -> Select "Thinking" model variant
+        2. Or "Think deeper" toggle if available
         """
         try:
-            print(f"[gemini] Attempting to enable Deep Think...")
-
-            # Step 1: Click the Tools button to open tools panel
-            tools_selectors = [
-                "button[aria-label*='Tools']",
-                "button[aria-label*='tools']",
-                "button:has-text('Tools')",
-                "mat-icon-button[aria-label*='Tools']",
-                # Common icon button patterns
-                "button:has(mat-icon)",
-                "[data-test-id='tools-button']",
-            ]
-
+            # Click the "Tools" button to open the tools panel
             tools_opened = False
-            for selector in tools_selectors:
+            buttons = await self.page.query_selector_all("button")
+            for btn in buttons:
                 try:
-                    btn = await self.page.query_selector(selector)
-                    if btn:
-                        is_visible = await btn.is_visible()
-                        if is_visible:
-                            text = await btn.inner_text() if await btn.inner_text() else ""
-                            aria = await btn.get_attribute("aria-label") or ""
-                            print(f"[gemini] Found Tools button: '{text}' aria='{aria}'")
-                            await btn.click()
-                            await asyncio.sleep(0.5)
-                            tools_opened = True
-                            break
+                    is_visible = await btn.is_visible()
+                    if not is_visible:
+                        continue
+                    text = (await btn.inner_text() or "").strip().lower()
+                    aria = (await btn.get_attribute("aria-label") or "").lower()
+
+                    if 'tools' in text or 'tools' in aria:
+                        await btn.click()
+                        await asyncio.sleep(1.0)
+                        tools_opened = True
+                        break
                 except Exception:
                     continue
 
             if not tools_opened:
-                print(f"[gemini] Tools button not found")
+                logger.warning("[gemini] Tools button not found")
+                return False
 
-            # Step 2: Look for Deep Think option
-            deep_think_selectors = [
-                # Direct text match
-                "button:has-text('Deep Think')",
-                "div:has-text('Deep Think')",
-                "[role='menuitem']:has-text('Deep Think')",
-                "[role='option']:has-text('Deep Think')",
-                "mat-option:has-text('Deep Think')",
-                # Also try DeepThink without space
-                "button:has-text('DeepThink')",
-                "[role='menuitem']:has-text('DeepThink')",
-            ]
+            # Look for Deep Think option using exact text match
+            try:
+                deep_think_elem = await self.page.query_selector("text='Deep Think'")
+                if deep_think_elem:
+                    is_visible = await deep_think_elem.is_visible()
+                    if is_visible:
+                        await deep_think_elem.click()
+                        await asyncio.sleep(1)
+                        await self._handle_mode_change_confirmation()
+                        logger.info("[gemini] Deep Think enabled")
+                        self.deep_think_enabled = True
+                        return True
+            except Exception:
+                pass
 
-            for selector in deep_think_selectors:
+            # Fallback: search elements for exact "Deep Think" text
+            all_elements = await self.page.query_selector_all("button, span, div, li, [role='menuitem'], [role='option']")
+            for elem in all_elements:
                 try:
-                    option = await self.page.query_selector(selector)
-                    if option:
-                        is_visible = await option.is_visible()
-                        if is_visible:
-                            text = await option.inner_text()
-                            print(f"[gemini] Found Deep Think option: '{text[:30]}'")
+                    is_visible = await elem.is_visible()
+                    if not is_visible:
+                        continue
+                    text = (await elem.inner_text() or "").strip()
 
-                            # Click to enable
-                            await option.click()
-                            await asyncio.sleep(1)
-
-                            # Handle "Start new chat" prompt if it appears
-                            new_chat_selectors = [
-                                "button:has-text('Start new chat')",
-                                "button:has-text('New chat')",
-                                "button:has-text('Start')",
-                                "[data-test-id='confirm-new-chat']",
-                            ]
-
-                            for nc_selector in new_chat_selectors:
-                                try:
-                                    nc_btn = await self.page.query_selector(nc_selector)
-                                    if nc_btn:
-                                        nc_visible = await nc_btn.is_visible()
-                                        if nc_visible:
-                                            print(f"[gemini] Confirming new chat for Deep Think")
-                                            await nc_btn.click()
-                                            await asyncio.sleep(1)
-                                            break
-                                except Exception:
-                                    continue
-
-                            print(f"[gemini] Deep Think enabled!")
-                            self.deep_think_enabled = True
-                            return True
+                    if text.lower() == 'deep think':
+                        await elem.click()
+                        await asyncio.sleep(1)
+                        await self._handle_mode_change_confirmation()
+                        logger.info("[gemini] Deep Think enabled")
+                        self.deep_think_enabled = True
+                        return True
                 except Exception:
                     continue
 
-            print(f"[gemini] Deep Think option not found")
+            logger.warning("[gemini] Deep Think option not found")
             return False
 
         except Exception as e:
-            print(f"[gemini] Could not enable Deep Think: {e}")
+            logger.error(f"[gemini] Could not enable Deep Think: {e}")
             return False
+
+    async def _handle_mode_change_confirmation(self):
+        """Handle any confirmation dialogs when switching modes."""
+        confirmation_selectors = [
+            "button:has-text('Start new chat')",
+            "button:has-text('New chat')",
+            "button:has-text('Confirm')",
+            "button:has-text('Continue')",
+            "button:has-text('OK')",
+            "button:has-text('Start')",
+            "[data-test-id='confirm-new-chat']",
+        ]
+
+        for selector in confirmation_selectors:
+            try:
+                btn = await self.page.query_selector(selector)
+                if btn:
+                    is_visible = await btn.is_visible()
+                    if is_visible:
+                        text = await btn.inner_text()
+                        logger.info(f"[gemini] Clicking confirmation: '{text[:30]}'")
+                        await btn.click()
+                        await asyncio.sleep(1)
+                        return
+            except Exception:
+                continue
     
     async def start_new_chat(self):
         """Start a new conversation."""
@@ -217,13 +219,9 @@ class GeminiInterface(BaseLLMInterface):
                 success = await self.enable_deep_think()
                 if success:
                     self.last_deep_mode_used = True
-                    print(f"[gemini] Deep Think ENABLED for this message")
             # If already enabled from previous message, it's still active
             if self.deep_think_enabled:
                 self.last_deep_mode_used = True
-
-        mode_str = " [DEEP THINK]" if self.last_deep_mode_used else ""
-        print(f"[gemini]{mode_str} Sending message ({len(message)} chars)...")
         
         try:
             # Find the input area

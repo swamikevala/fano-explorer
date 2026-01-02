@@ -102,7 +102,7 @@ class Orchestrator:
         except Exception as e:
             logger.warning(f"Could not connect to ChatGPT: {e}")
             self.chatgpt = None
-        
+
         try:
             self.gemini = GeminiInterface()
             await self.gemini.connect()
