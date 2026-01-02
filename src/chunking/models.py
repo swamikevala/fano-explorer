@@ -204,3 +204,262 @@ class AtomicInsight:
 
     def __repr__(self) -> str:
         return f"AtomicInsight({self.id}, confidence={self.confidence}, status={self.status.value})"
+
+
+@dataclass
+class InsightVersion:
+    """
+    A version of an insight's text (original or refined).
+
+    Tracks the evolution of an insight through refinement rounds.
+    """
+    version: int                      # 1 = original, 2+ = refined
+    insight: str                      # The insight text at this version
+    author: str                       # "extraction" or "refinement"
+    created_at: datetime
+    review_round: int                 # Which review round evaluated this
+    ratings: dict[str, str]           # {llm: rating} from the review
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "version": self.version,
+            "insight": self.insight,
+            "author": self.author,
+            "created_at": self.created_at.isoformat(),
+            "review_round": self.review_round,
+            "ratings": self.ratings,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "InsightVersion":
+        """Deserialize from dictionary."""
+        return cls(
+            version=data["version"],
+            insight=data["insight"],
+            author=data["author"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            review_round=data["review_round"],
+            ratings=data.get("ratings", {}),
+        )
+
+
+@dataclass
+class Refinement:
+    """
+    Record of a refinement operation on an insight.
+
+    Created when Claude Opus rewrites an insight based on review critiques.
+    """
+    from_version: int                 # Source version number
+    to_version: int                   # New version number
+    original_insight: str             # Text before refinement
+    refined_insight: str              # Text after refinement
+    changes_made: list[str]           # List of changes made
+    addressed_critiques: list[str]    # Which reviewer concerns were addressed
+    unresolved_issues: list[str]      # Issues that couldn't be fixed
+    refinement_confidence: str        # "high" | "medium" | "low"
+    triggered_by_ratings: dict[str, str]  # Ratings that prompted refinement
+    timestamp: datetime
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "from_version": self.from_version,
+            "to_version": self.to_version,
+            "original_insight": self.original_insight,
+            "refined_insight": self.refined_insight,
+            "changes_made": self.changes_made,
+            "addressed_critiques": self.addressed_critiques,
+            "unresolved_issues": self.unresolved_issues,
+            "refinement_confidence": self.refinement_confidence,
+            "triggered_by_ratings": self.triggered_by_ratings,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Refinement":
+        """Deserialize from dictionary."""
+        return cls(
+            from_version=data["from_version"],
+            to_version=data["to_version"],
+            original_insight=data["original_insight"],
+            refined_insight=data["refined_insight"],
+            changes_made=data.get("changes_made", []),
+            addressed_critiques=data.get("addressed_critiques", []),
+            unresolved_issues=data.get("unresolved_issues", []),
+            refinement_confidence=data.get("refinement_confidence", "medium"),
+            triggered_by_ratings=data.get("triggered_by_ratings", {}),
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+        )
+
+    @classmethod
+    def create(
+        cls,
+        from_version: int,
+        original_insight: str,
+        refined_insight: str,
+        changes_made: list[str],
+        addressed_critiques: list[str],
+        unresolved_issues: list[str],
+        refinement_confidence: str,
+        triggered_by_ratings: dict[str, str],
+    ) -> "Refinement":
+        """Factory method to create a new refinement record."""
+        return cls(
+            from_version=from_version,
+            to_version=from_version + 1,
+            original_insight=original_insight,
+            refined_insight=refined_insight,
+            changes_made=changes_made,
+            addressed_critiques=addressed_critiques,
+            unresolved_issues=unresolved_issues,
+            refinement_confidence=refinement_confidence,
+            triggered_by_ratings=triggered_by_ratings,
+            timestamp=datetime.now(),
+        )
+
+
+@dataclass
+class VersionedInsight:
+    """
+    An insight with full version history.
+
+    Extends AtomicInsight with version tracking for refinement process.
+    This is used when an insight goes through refinement rounds.
+    """
+    # Core insight data
+    base: AtomicInsight
+
+    # Version tracking
+    versions: list[InsightVersion] = field(default_factory=list)
+    refinements: list[Refinement] = field(default_factory=list)
+    current_version: int = 1
+
+    def __post_init__(self):
+        """Initialize with original version if versions empty."""
+        if not self.versions and self.base.insight:
+            self.versions.append(InsightVersion(
+                version=1,
+                insight=self.base.insight,
+                author="extraction",
+                created_at=self.base.extracted_at,
+                review_round=1,
+                ratings={},
+            ))
+
+    @property
+    def was_refined(self) -> bool:
+        """Check if this insight has been refined."""
+        return len(self.versions) > 1
+
+    @property
+    def original_insight(self) -> str:
+        """Get the original (pre-refinement) insight text."""
+        return self.versions[0].insight if self.versions else self.base.insight
+
+    @property
+    def current_insight(self) -> str:
+        """Get the current (possibly refined) insight text."""
+        if self.versions:
+            return self.versions[self.current_version - 1].insight
+        return self.base.insight
+
+    def add_refinement(
+        self,
+        refined_insight: str,
+        changes_made: list[str],
+        addressed_critiques: list[str],
+        unresolved_issues: list[str],
+        refinement_confidence: str,
+        triggered_by_ratings: dict[str, str],
+    ) -> Refinement:
+        """
+        Add a refinement to this insight.
+
+        Args:
+            refined_insight: The refined text
+            changes_made: List of changes made
+            addressed_critiques: Which critiques were addressed
+            unresolved_issues: Issues that couldn't be fixed
+            refinement_confidence: How confident in the improvement
+            triggered_by_ratings: The ratings that prompted refinement
+
+        Returns:
+            The created Refinement record
+        """
+        # Create refinement record
+        refinement = Refinement.create(
+            from_version=self.current_version,
+            original_insight=self.current_insight,
+            refined_insight=refined_insight,
+            changes_made=changes_made,
+            addressed_critiques=addressed_critiques,
+            unresolved_issues=unresolved_issues,
+            refinement_confidence=refinement_confidence,
+            triggered_by_ratings=triggered_by_ratings,
+        )
+        self.refinements.append(refinement)
+
+        # Create new version
+        new_version = InsightVersion(
+            version=refinement.to_version,
+            insight=refined_insight,
+            author="refinement",
+            created_at=refinement.timestamp,
+            review_round=len(self.versions) + 1,
+            ratings={},
+        )
+        self.versions.append(new_version)
+        self.current_version = new_version.version
+
+        # Update base insight
+        self.base.insight = refined_insight
+
+        return refinement
+
+    def record_ratings(self, ratings: dict[str, str]):
+        """Record ratings for the current version."""
+        if self.versions:
+            self.versions[self.current_version - 1].ratings = ratings
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        data = self.base.to_dict()
+        data["versions"] = [v.to_dict() for v in self.versions]
+        data["refinements"] = [r.to_dict() for r in self.refinements]
+        data["current_version"] = self.current_version
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "VersionedInsight":
+        """Deserialize from dictionary."""
+        base = AtomicInsight.from_dict(data)
+        versions = [InsightVersion.from_dict(v) for v in data.get("versions", [])]
+        refinements = [Refinement.from_dict(r) for r in data.get("refinements", [])]
+        current_version = data.get("current_version", 1)
+
+        return cls(
+            base=base,
+            versions=versions,
+            refinements=refinements,
+            current_version=current_version,
+        )
+
+    @classmethod
+    def from_insight(cls, insight: AtomicInsight) -> "VersionedInsight":
+        """Create a VersionedInsight from an existing AtomicInsight."""
+        return cls(base=insight)
+
+    def save(self, base_dir: Path):
+        """Save versioned insight (delegates to base)."""
+        # Update base with current insight text
+        self.base.insight = self.current_insight
+
+        # Add version info to review notes
+        if self.was_refined:
+            version_note = f"\n\n[Refined from v{self.versions[0].version} to v{self.current_version}]"
+            if version_note not in self.base.review_notes:
+                self.base.review_notes += version_note
+
+        self.base.save(base_dir)

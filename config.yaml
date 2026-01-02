@@ -128,12 +128,19 @@ review_panel:
   enabled: true
   # Environment variable containing Claude API key
   claude_api_key_env: "ANTHROPIC_API_KEY"
-  # Claude model to use
-  claude_model: "claude-sonnet-4-20250514"
+  # Claude model to use (Opus for extraction/refinement, best at precise articulation)
+  claude_model: "claude-opus-4-20250514"
 
   # Round 1: Independent review (standard modes)
   round1:
     use_deep_modes: false
+
+  # Refinement settings (Claude Opus rewrites based on critiques)
+  refinement:
+    # Maximum refinement attempts before escalating to deliberation
+    max_refinement_rounds: 2
+    # If true, escalate to deliberation after failed refinement
+    escalate_after_failed_refinement: true
 
   # Round 2: Deep analysis (deep think modes)
   round2:

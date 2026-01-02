@@ -760,26 +760,36 @@ CONTENT:
         """
         Extract atomic insights from a thread and run automated review.
 
+        Claude Opus is the primary extraction author (best at precise articulation).
+        Falls back to browser LLMs if Claude is unavailable.
+
         Args:
             thread: The exploration thread to extract from
-            model_name: Name of the model to use for extraction
-            model: The model instance
+            model_name: Name of the fallback model
+            model: The fallback model instance (browser LLM)
         """
         if thread.chunks_extracted:
             logger.info(f"[{thread.id}] Already extracted, skipping")
             return
 
-        logger.info(f"[{thread.id}] Starting atomic extraction with {model_name}")
+        # Get Claude reviewer for extraction (preferred author)
+        claude_reviewer = None
+        if self.reviewer:
+            claude_reviewer = self.reviewer.claude_reviewer
+
+        author = "Claude Opus" if claude_reviewer and claude_reviewer.is_available() else model_name
+        logger.info(f"[{thread.id}] Starting atomic extraction with {author}")
 
         try:
             # Get blessed insights for dependency context
             blessed_insights = self._get_blessed_insights()
 
-            # Extract atomic insights
+            # Extract atomic insights (Claude preferred, fallback to browser model)
             insights = await self.extractor.extract_from_thread(
                 thread=thread,
-                model=model,
-                model_name=model_name,
+                claude_reviewer=claude_reviewer,
+                fallback_model=model,
+                fallback_model_name=model_name,
                 blessed_insights=blessed_insights,
             )
 

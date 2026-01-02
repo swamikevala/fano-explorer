@@ -23,7 +23,7 @@ class ClaudeReviewer:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-opus-4-20250514",
     ):
         """
         Initialize the Claude reviewer.
@@ -164,6 +164,6 @@ def get_claude_reviewer(config: dict = None) -> Optional[ClaudeReviewer]:
         logger.warning(f"[claude] {api_key_env} not set, Claude review unavailable")
         return None
 
-    model = config.get("claude_model", "claude-sonnet-4-20250514")
+    model = config.get("claude_model", "claude-opus-4-20250514")
 
     return ClaudeReviewer(api_key=api_key, model=model)

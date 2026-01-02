@@ -2,15 +2,20 @@
 Atomic insight extractor.
 
 Extracts multiple atomic insights (1-3 sentences each) from exploration threads.
+Claude Opus is the primary extraction author (best at precise articulation).
+Falls back to browser LLMs if Claude is unavailable.
 """
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from .models import AtomicInsight, InsightStatus
 from .prompts import build_extraction_prompt, format_blessed_summary, parse_extraction_response
 from .dependencies import resolve_dependencies
+
+if TYPE_CHECKING:
+    from review_panel.claude_api import ClaudeReviewer
 
 logger = logging.getLogger(__name__)
 
@@ -43,20 +48,23 @@ class AtomicExtractor:
     async def extract_from_thread(
         self,
         thread,
-        model,
-        model_name: str,
+        claude_reviewer: "ClaudeReviewer" = None,
+        fallback_model=None,
+        fallback_model_name: str = None,
         blessed_insights: list = None,
-        use_deep_mode: bool = False,
     ) -> list[AtomicInsight]:
         """
         Extract atomic insights from an exploration thread.
 
+        Claude Opus is the primary author (best at precise articulation).
+        Falls back to browser LLMs if Claude is unavailable.
+
         Args:
             thread: ExplorationThread to extract from
-            model: LLM interface (ChatGPTInterface or GeminiInterface)
-            model_name: Name of the model ("chatgpt" or "gemini")
+            claude_reviewer: ClaudeReviewer instance (preferred)
+            fallback_model: Browser LLM interface (ChatGPT or Gemini) if Claude unavailable
+            fallback_model_name: Name of fallback model ("chatgpt" or "gemini")
             blessed_insights: List of existing blessed insights for dependencies
-            use_deep_mode: Whether to use deep think mode
 
         Returns:
             List of extracted AtomicInsight objects
@@ -73,8 +81,9 @@ class AtomicExtractor:
         blessed_summary = format_blessed_summary(blessed_insights or [])
 
         # Get config options
-        max_insights = self.config.get("max_insights_per_thread", 10)
-        min_confidence = self.config.get("min_confidence_to_keep", "low")
+        chunking_config = self.config.get("chunking", {})
+        max_insights = chunking_config.get("max_insights_per_thread", 10)
+        min_confidence = chunking_config.get("min_confidence_to_keep", "low")
 
         # Build and send prompt
         prompt = build_extraction_prompt(
@@ -83,12 +92,21 @@ class AtomicExtractor:
             max_insights=max_insights,
         )
 
+        # Determine which model to use (Claude preferred)
+        extraction_model = "claude"
         try:
-            # Send to model
-            if model_name == "chatgpt":
-                response = await model.send_message(prompt, use_pro_mode=use_deep_mode)
+            if claude_reviewer and claude_reviewer.is_available():
+                logger.info(f"[extractor] Using Claude Opus for extraction")
+                response = await claude_reviewer.send_message(prompt, extended_thinking=False)
+            elif fallback_model and fallback_model_name:
+                logger.info(f"[extractor] Claude unavailable, using {fallback_model_name} as fallback")
+                extraction_model = fallback_model_name
+                if fallback_model_name == "chatgpt":
+                    response = await fallback_model.send_message(prompt, use_pro_mode=False)
+                else:
+                    response = await fallback_model.send_message(prompt, use_deep_think=False)
             else:
-                response = await model.send_message(prompt, use_deep_think=use_deep_mode)
+                raise ValueError("No extraction model available (Claude or fallback)")
 
             logger.info(f"[extractor] Got response ({len(response)} chars)")
 
@@ -126,7 +144,7 @@ class AtomicExtractor:
                 confidence=parsed["confidence"],
                 tags=parsed["tags"],
                 source_thread_id=thread.id,
-                extraction_model=model_name,
+                extraction_model=extraction_model,
                 depends_on=parsed.get("depends_on", []),
                 pending_dependencies=parsed.get("pending_dependencies", []),
             )
@@ -134,7 +152,8 @@ class AtomicExtractor:
 
         # Resolve dependencies
         if blessed_insights:
-            threshold = self.config.get("semantic_match_threshold", 0.5)
+            deps_config = self.config.get("dependencies", {})
+            threshold = deps_config.get("semantic_match_threshold", 0.5)
             for insight in insights:
                 if insight.pending_dependencies:
                     resolved, still_pending = resolve_dependencies(

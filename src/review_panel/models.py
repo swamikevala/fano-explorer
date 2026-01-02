@@ -176,12 +176,61 @@ class ReviewRound:
 
 
 @dataclass
+class RefinementRecord:
+    """
+    Record of a refinement made to an insight during review.
+    """
+    from_version: int                      # Original version number
+    to_version: int                        # New version number
+    original_insight: str                  # Text before refinement
+    refined_insight: str                   # Text after refinement
+    changes_made: list[str]                # What was changed
+    addressed_critiques: list[str]         # Which concerns were addressed
+    unresolved_issues: list[str]           # Issues that couldn't be fixed
+    refinement_confidence: str             # "high" | "medium" | "low"
+    triggered_by_ratings: dict[str, str]   # Ratings that prompted this
+    timestamp: datetime
+
+    def to_dict(self) -> dict:
+        return {
+            "from_version": self.from_version,
+            "to_version": self.to_version,
+            "original_insight": self.original_insight,
+            "refined_insight": self.refined_insight,
+            "changes_made": self.changes_made,
+            "addressed_critiques": self.addressed_critiques,
+            "unresolved_issues": self.unresolved_issues,
+            "refinement_confidence": self.refinement_confidence,
+            "triggered_by_ratings": self.triggered_by_ratings,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RefinementRecord":
+        return cls(
+            from_version=data["from_version"],
+            to_version=data["to_version"],
+            original_insight=data["original_insight"],
+            refined_insight=data["refined_insight"],
+            changes_made=data.get("changes_made", []),
+            addressed_critiques=data.get("addressed_critiques", []),
+            unresolved_issues=data.get("unresolved_issues", []),
+            refinement_confidence=data.get("refinement_confidence", "medium"),
+            triggered_by_ratings=data.get("triggered_by_ratings", {}),
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+        )
+
+
+@dataclass
 class ChunkReview:
     """
     Complete review record for an insight.
     """
     chunk_id: str                          # ID of insight being reviewed
     rounds: list[ReviewRound] = field(default_factory=list)
+    refinements: list[RefinementRecord] = field(default_factory=list)  # Refinement history
+    final_version: int = 1                 # Which version was blessed/rejected
+    was_refined: bool = False              # Did the insight go through refinement?
     final_rating: Optional[str] = None     # "⚡" | "?" | "✗"
     is_unanimous: bool = False             # Did all reviewers agree?
     is_disputed: bool = False              # Persistent 2-1 split?
@@ -194,6 +243,9 @@ class ChunkReview:
         return {
             "chunk_id": self.chunk_id,
             "rounds": [r.to_dict() for r in self.rounds],
+            "refinements": [r.to_dict() for r in self.refinements],
+            "final_version": self.final_version,
+            "was_refined": self.was_refined,
             "final_rating": self.final_rating,
             "is_unanimous": self.is_unanimous,
             "is_disputed": self.is_disputed,
@@ -208,6 +260,9 @@ class ChunkReview:
         return cls(
             chunk_id=data["chunk_id"],
             rounds=[ReviewRound.from_dict(r) for r in data.get("rounds", [])],
+            refinements=[RefinementRecord.from_dict(r) for r in data.get("refinements", [])],
+            final_version=data.get("final_version", 1),
+            was_refined=data.get("was_refined", False),
             final_rating=data.get("final_rating"),
             is_unanimous=data.get("is_unanimous", False),
             is_disputed=data.get("is_disputed", False),
@@ -240,6 +295,12 @@ class ChunkReview:
     def add_round(self, round: ReviewRound):
         """Add a review round."""
         self.rounds.append(round)
+
+    def add_refinement(self, refinement: RefinementRecord):
+        """Add a refinement record."""
+        self.refinements.append(refinement)
+        self.was_refined = True
+        self.final_version = refinement.to_version
 
     def finalize(self, rating: str, unanimous: bool, disputed: bool):
         """Finalize the review with outcome."""
@@ -286,3 +347,123 @@ def detect_mind_changes(
             ))
 
     return changes
+
+
+# Patterns in critique text that suggest refinement vs deliberation
+REFINEMENT_PATTERNS = [
+    "vague wording",
+    "unclear",
+    "imprecise",
+    "could be clearer",
+    "needs sharpening",
+    "hedging",
+    "could be stated more",
+    "framing is",
+    "missing precision",
+    "articulation",
+    "language could",
+    "could be more specific",
+]
+
+FUNDAMENTAL_FLAW_PATTERNS = [
+    "core claim is wrong",
+    "fundamentally flawed",
+    "numerology",
+    "unfalsifiable",
+    "too vague to evaluate",
+    "restates input",
+    "no actual insight",
+    "circular reasoning",
+    "doesn't actually say anything",
+    "not a valid",
+    "mathematically incorrect",
+]
+
+
+def should_refine_vs_deliberate(round1: ReviewRound) -> tuple[bool, str]:
+    """
+    Determine whether to refine the insight or proceed to deliberation.
+
+    Based on the decision criteria from chunk-authorship-refinement.md:
+    - Refine: articulation/precision/framing issues that can be fixed
+    - Deliberate: fundamental disagreement about the claim itself
+
+    Args:
+        round1: The completed Round 1 review
+
+    Returns:
+        Tuple of (should_refine, reason)
+    """
+    ratings = round1.get_ratings()
+    rating_values = list(ratings.values())
+
+    # If unanimous, no need for refinement or deliberation
+    if len(set(rating_values)) == 1:
+        return False, "unanimous"
+
+    # Collect all reasoning text
+    all_reasoning = ""
+    for resp in round1.responses.values():
+        all_reasoning += " " + resp.reasoning.lower()
+        all_reasoning += " " + resp.mathematical_verification.lower()
+        all_reasoning += " " + resp.structural_analysis.lower()
+        all_reasoning += " " + resp.naturalness_assessment.lower()
+
+    # Check for fundamental flaws (should deliberate, not refine)
+    for pattern in FUNDAMENTAL_FLAW_PATTERNS:
+        if pattern in all_reasoning:
+            return False, f"fundamental flaw detected: {pattern}"
+
+    # Check for refinement opportunities
+    refinement_signals = 0
+    for pattern in REFINEMENT_PATTERNS:
+        if pattern in all_reasoning:
+            refinement_signals += 1
+
+    # Decision matrix based on rating pattern
+    bless_count = rating_values.count("⚡")
+    uncertain_count = rating_values.count("?")
+    reject_count = rating_values.count("✗")
+
+    # Strong candidates for refinement:
+    # 2×⚡ + 1×? : Strong with minor hesitation - may refine to resolve hesitation
+    # 1×⚡ + 2×? : Promising but underdeveloped - may refine to clarify
+    # 1×⚡ + 1×? + 1×✗ : Full spread - analyze critiques to decide
+    if bless_count >= 1 and reject_count == 0 and refinement_signals >= 1:
+        return True, f"promising with {refinement_signals} refinement signals"
+
+    # Mixed with refinement signals - try refinement first
+    if refinement_signals >= 2:
+        return True, f"{refinement_signals} refinement signals detected"
+
+    # Default: go to deliberation for fundamental disagreement
+    if bless_count >= 1 and reject_count >= 1:
+        return False, "fundamental disagreement (bless vs reject)"
+
+    # 2×? + 1×anything - needs development, may benefit from refinement
+    if uncertain_count >= 2:
+        return True, "mostly uncertain, try refinement"
+
+    return False, "default to deliberation"
+
+
+def get_rating_pattern(round: ReviewRound) -> str:
+    """
+    Get a human-readable pattern of ratings.
+
+    Returns strings like "2×⚡ + 1×?" for logging.
+    """
+    ratings = list(round.get_ratings().values())
+    bless = ratings.count("⚡")
+    uncertain = ratings.count("?")
+    reject = ratings.count("✗")
+
+    parts = []
+    if bless > 0:
+        parts.append(f"{bless}×⚡")
+    if uncertain > 0:
+        parts.append(f"{uncertain}×?")
+    if reject > 0:
+        parts.append(f"{reject}×✗")
+
+    return " + ".join(parts) if parts else "no ratings"

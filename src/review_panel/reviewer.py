@@ -1,12 +1,14 @@
 """
 Automated Review Panel Coordinator
 
-Orchestrates the three-round review process:
+Orchestrates the review process with refinement support:
 1. Round 1: Independent parallel review (standard modes)
-2. Round 2: Deep analysis with all Round 1 visible (deep thinking modes)
-3. Round 3: Structured deliberation (if still split)
+2. If mixed with fixable issues → Refinement Round (Claude Opus rewrites)
+3. Post-Refinement Review (all 3 review refined version)
+4. If still mixed → Round 3: Structured deliberation
+5. Final outcome applied with appropriate flags
 
-Final outcome is applied to the insight with appropriate flags.
+Claude Opus writes extraction and refinement; all three judge.
 """
 
 import logging
@@ -15,10 +17,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .models import ChunkReview, ReviewDecision
+from .models import (
+    ChunkReview,
+    ReviewDecision,
+    should_refine_vs_deliberate,
+    get_rating_pattern,
+)
 from .round1 import run_round1
 from .round2 import run_round2
 from .round3 import run_round3
+from .refinement import run_refinement_round, run_post_refinement_review
 from .claude_api import get_claude_reviewer, ClaudeReviewer
 
 logger = logging.getLogger(__name__)
@@ -83,6 +91,14 @@ class AutomatedReviewer:
         """
         Run the full review process on an insight.
 
+        Flow:
+        1. Round 1: Independent review
+        2. If unanimous → Done
+        3. If mixed, check if refinement or deliberation is needed
+        4. If refinement → Claude Opus rewrites, then post-refinement review
+        5. If still mixed → Round 3 deliberation
+        6. Final rating applied
+
         Args:
             chunk_id: Unique ID for this insight
             insight_text: The insight text to review
@@ -98,11 +114,14 @@ class AutomatedReviewer:
         logger.info(f"[reviewer] Starting review for {chunk_id}")
 
         review = ChunkReview(chunk_id=chunk_id)
+        current_insight = insight_text
+        current_version = 1
+        max_refinement_rounds = self.panel_config.get("refinement", {}).get("max_refinement_rounds", 2)
 
         try:
             # Round 1: Independent review
             round1 = await run_round1(
-                chunk_insight=insight_text,
+                chunk_insight=current_insight,
                 confidence=confidence,
                 tags=tags,
                 dependencies=dependencies,
@@ -114,7 +133,10 @@ class AutomatedReviewer:
             )
             review.add_round(round1)
 
-            # Check for early exit
+            pattern = get_rating_pattern(round1)
+            logger.info(f"[reviewer] Round 1 complete: {pattern}")
+
+            # Check for early exit (unanimous)
             if round1.outcome == "unanimous":
                 final_rating = list(round1.get_ratings().values())[0]
                 review.finalize(
@@ -126,11 +148,80 @@ class AutomatedReviewer:
                 self._save_review(review, start_time)
                 return review
 
-            # Round 2: Deep analysis
+            # Determine: Refine or Deliberate?
+            should_refine, refine_reason = should_refine_vs_deliberate(round1)
+            logger.info(f"[reviewer] Decision: {'Refine' if should_refine else 'Deliberate'} ({refine_reason})")
+
+            last_round = round1
+            refinement_attempts = 0
+
+            # Refinement loop (up to max_refinement_rounds)
+            while should_refine and refinement_attempts < max_refinement_rounds:
+                refinement_attempts += 1
+                logger.info(f"[reviewer] Refinement attempt {refinement_attempts}/{max_refinement_rounds}")
+
+                # Run refinement round (Claude Opus rewrites)
+                refinement, refined_insight = await run_refinement_round(
+                    original_insight=current_insight,
+                    confidence=confidence,
+                    tags=tags,
+                    dependencies=dependencies,
+                    round1=last_round,
+                    claude_reviewer=self.claude_reviewer,
+                    current_version=current_version,
+                )
+
+                if not refinement:
+                    logger.warning("[reviewer] Refinement failed, proceeding to deliberation")
+                    break
+
+                # Record refinement
+                review.add_refinement(refinement)
+                current_insight = refined_insight
+                current_version = refinement.to_version
+
+                # Post-refinement review
+                post_refine_round, mind_changes = await run_post_refinement_review(
+                    original_insight=insight_text,
+                    refined_insight=refined_insight,
+                    refinement=refinement,
+                    round1=last_round,
+                    gemini_browser=self.gemini_browser,
+                    chatgpt_browser=self.chatgpt_browser,
+                    claude_reviewer=self.claude_reviewer,
+                    config=self.panel_config,
+                )
+                review.add_round(post_refine_round)
+                review.mind_changes.extend(mind_changes)
+
+                pattern = get_rating_pattern(post_refine_round)
+                logger.info(f"[reviewer] Post-refinement review: {pattern}")
+
+                # Check if refinement resolved the split
+                if post_refine_round.outcome == "unanimous":
+                    final_rating = list(post_refine_round.get_ratings().values())[0]
+                    review.finalize(
+                        rating=final_rating,
+                        unanimous=True,
+                        disputed=False,
+                    )
+                    logger.info(f"[reviewer] Unanimous after refinement: {final_rating}")
+                    self._save_review(review, start_time)
+                    return review
+
+                # Check if we should try another refinement or deliberate
+                last_round = post_refine_round
+                should_refine, refine_reason = should_refine_vs_deliberate(post_refine_round)
+
+                if not should_refine:
+                    logger.info(f"[reviewer] Moving to deliberation: {refine_reason}")
+
+            # Round 2/3: Deep analysis or deliberation
+            # At this point we've either skipped refinement or exhausted refinement attempts
             round2, mind_changes_r2 = await run_round2(
-                chunk_insight=insight_text,
+                chunk_insight=current_insight,
                 blessed_axioms_summary=blessed_axioms_summary,
-                round1=round1,
+                round1=last_round,
                 gemini_browser=self.gemini_browser,
                 chatgpt_browser=self.chatgpt_browser,
                 claude_reviewer=self.claude_reviewer,
@@ -139,7 +230,10 @@ class AutomatedReviewer:
             review.add_round(round2)
             review.mind_changes.extend(mind_changes_r2)
 
-            # Check for early exit
+            pattern = get_rating_pattern(round2)
+            logger.info(f"[reviewer] Round 2 (deep analysis): {pattern}")
+
+            # Check for resolution
             if round2.outcome == "unanimous":
                 final_rating = list(round2.get_ratings().values())[0]
                 review.finalize(
@@ -154,7 +248,7 @@ class AutomatedReviewer:
             # Round 3: Structured deliberation
             if self.panel_config.get("round3", {}).get("enabled", True):
                 round3, mind_changes_r3, is_disputed = await run_round3(
-                    chunk_insight=insight_text,
+                    chunk_insight=current_insight,
                     round2=round2,
                     gemini_browser=self.gemini_browser,
                     chatgpt_browser=self.chatgpt_browser,
@@ -180,7 +274,8 @@ class AutomatedReviewer:
                     disputed=True,
                 )
 
-            logger.info(f"[reviewer] Final rating: {final_rating} (disputed={review.is_disputed})")
+            logger.info(f"[reviewer] Final rating: {final_rating} "
+                       f"(disputed={review.is_disputed}, refined={review.was_refined})")
             self._save_review(review, start_time)
             return review
 
