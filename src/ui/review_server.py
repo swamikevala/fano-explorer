@@ -18,7 +18,7 @@ from models import Chunk, ChunkStatus, ChunkFeedback, AxiomStore, BlessedInsight
 
 # Load config
 CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
-with open(CONFIG_PATH) as f:
+with open(CONFIG_PATH, encoding="utf-8") as f:
     CONFIG = yaml.safe_load(f)
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"

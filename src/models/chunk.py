@@ -176,7 +176,7 @@ class Chunk:
     @classmethod
     def load(cls, json_path: Path) -> "Chunk":
         """Load chunk from JSON file."""
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
     
     def to_markdown(self) -> str:

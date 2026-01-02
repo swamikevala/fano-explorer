@@ -40,7 +40,7 @@ class SourceExcerpt:
         
         The actual excerpt content here...
         """
-        text = filepath.read_text()
+        text = filepath.read_text(encoding="utf-8")
         
         # Parse YAML frontmatter
         if text.startswith("---"):
@@ -145,7 +145,7 @@ class AxiomStore:
         if not self.numbers_file.exists():
             return []
         
-        with open(self.numbers_file) as f:
+        with open(self.numbers_file, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         
         numbers = []
@@ -160,7 +160,7 @@ class AxiomStore:
         insights = []
         for filepath in self.blessed_dir.glob("*.md"):
             # Parse similar to excerpts
-            text = filepath.read_text()
+            text = filepath.read_text(encoding="utf-8")
             if text.startswith("---"):
                 parts = text.split("---", 2)
                 if len(parts) >= 3:
@@ -189,8 +189,8 @@ class AxiomStore:
             "numbers_explained": insight.numbers_explained,
         }
         
-        content = f"---\n{yaml.dump(frontmatter, default_flow_style=False)}---\n\n{insight.content}"
-        filepath.write_text(content)
+        content = f"---\n{yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)}---\n\n{insight.content}"
+        filepath.write_text(content, encoding="utf-8")
     
     def get_context_for_exploration(self, max_excerpts: int = 3, max_insights: int = 3) -> str:
         """

@@ -34,12 +34,12 @@ from models import (
 )
 from storage.db import Database
 
-# Setup logging
+# Setup logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler('logs/exploration.log'),
+        logging.FileHandler('logs/exploration.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 # Load config
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
-with open(CONFIG_PATH) as f:
+with open(CONFIG_PATH, encoding="utf-8") as f:
     CONFIG = yaml.safe_load(f)
 
 

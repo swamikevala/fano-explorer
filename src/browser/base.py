@@ -16,7 +16,7 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 # Load config - use absolute path resolution
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-with open(CONFIG_PATH) as f:
+with open(CONFIG_PATH, encoding="utf-8") as f:
     CONFIG = yaml.safe_load(f)
 
 BROWSER_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "browser_data"
@@ -79,7 +79,7 @@ class RateLimitTracker:
     
     def _load(self) -> dict:
         if RATE_LIMIT_FILE.exists():
-            with open(RATE_LIMIT_FILE) as f:
+            with open(RATE_LIMIT_FILE, encoding="utf-8") as f:
                 return json.load(f)
         return {
             "chatgpt": {"limited": False, "retry_at": None},
@@ -88,7 +88,7 @@ class RateLimitTracker:
     
     def _save(self):
         RATE_LIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(RATE_LIMIT_FILE, "w") as f:
+        with open(RATE_LIMIT_FILE, "w", encoding="utf-8") as f:
             json.dump(self.limits, f, indent=2, default=str)
     
     def mark_limited(self, model: str, retry_after_seconds: int = 3600):

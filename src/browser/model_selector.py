@@ -34,7 +34,7 @@ class DeepModeTracker:
         """Load state from file."""
         if DEEP_MODE_STATE_FILE.exists():
             try:
-                with open(DEEP_MODE_STATE_FILE) as f:
+                with open(DEEP_MODE_STATE_FILE, encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
                 pass
@@ -55,7 +55,7 @@ class DeepModeTracker:
     def _save(self):
         """Save state to file."""
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(DEEP_MODE_STATE_FILE, "w") as f:
+        with open(DEEP_MODE_STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(self.state, f, indent=2)
 
     def _check_daily_reset(self):
