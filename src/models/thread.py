@@ -177,13 +177,13 @@ class ExplorationThread:
         thread_dir = base_dir / "explorations"
         thread_dir.mkdir(parents=True, exist_ok=True)
         filepath = thread_dir / f"{self.id}.json"
-        with open(filepath, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
-    
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+
     @classmethod
     def load(cls, filepath: Path) -> "ExplorationThread":
         """Load thread from disk."""
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
     
     @classmethod

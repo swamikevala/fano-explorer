@@ -158,11 +158,10 @@ class GeminiInterface(BaseLLMInterface):
                 success = await self.enable_deep_think()
                 if success:
                     self.last_deep_mode_used = True
-                    deep_mode_tracker.record_usage("gemini_deep_think")
                     print(f"[gemini] Deep Think ENABLED for this message")
-            else:
+            # If already enabled from previous message, it's still active
+            if self.deep_think_enabled:
                 self.last_deep_mode_used = True
-                deep_mode_tracker.record_usage("gemini_deep_think")
 
         mode_str = " [DEEP THINK]" if self.last_deep_mode_used else ""
         print(f"[gemini]{mode_str} Sending message ({len(message)} chars)...")

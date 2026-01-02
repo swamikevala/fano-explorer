@@ -137,19 +137,27 @@ class Chunk:
             ChunkStatus.INTERESTING: "interesting",
             ChunkStatus.REJECTED: "rejected",
         }
-        
+
         chunk_dir = base_dir / "chunks" / status_dirs[self.status]
         chunk_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save as markdown for readability
-        md_path = chunk_dir / f"{self.id}.md"
-        with open(md_path, "w") as f:
-            f.write(self.to_markdown())
-        
-        # Also save JSON for structured access
-        json_path = chunk_dir / f"{self.id}.json"
-        with open(json_path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
+
+        try:
+            # Save as markdown for readability
+            md_content = self.to_markdown()
+            md_path = chunk_dir / f"{self.id}.md"
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(md_content)
+            print(f"[chunk] Saved markdown ({len(md_content)} chars): {md_path}")
+
+            # Also save JSON for structured access
+            json_path = chunk_dir / f"{self.id}.json"
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+            print(f"[chunk] Saved JSON: {json_path}")
+
+        except Exception as e:
+            print(f"[chunk] ERROR saving chunk {self.id}: {e}")
+            raise
     
     def move_to_status(self, base_dir: Path, new_status: ChunkStatus):
         """Move chunk files when status changes."""

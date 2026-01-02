@@ -22,6 +22,7 @@ from browser import (
     ChatGPTInterface,
     GeminiInterface,
     rate_tracker,
+    deep_mode_tracker,
     select_model,
     should_use_deep_mode,
     get_deep_mode_status,
@@ -257,8 +258,11 @@ class Orchestrator:
             else:
                 response = await model.send_message(prompt, use_deep_think=use_deep)
 
-            # Check if deep mode was actually used
+            # Check if deep mode was actually used and record it
             deep_mode_used = getattr(model, 'last_deep_mode_used', False)
+            if deep_mode_used:
+                mode_key = "gemini_deep_think" if model_name == "gemini" else "chatgpt_pro"
+                deep_mode_tracker.record_usage(mode_key)
 
             thread.add_exchange(
                 role=ExchangeRole.EXPLORER,
@@ -307,8 +311,11 @@ class Orchestrator:
             else:
                 response = await critique_model.send_message(prompt, use_deep_think=use_deep)
 
-            # Check if deep mode was actually used
+            # Check if deep mode was actually used and record it
             deep_mode_used = getattr(critique_model, 'last_deep_mode_used', False)
+            if deep_mode_used:
+                mode_key = "gemini_deep_think" if critique_model_name == "gemini" else "chatgpt_pro"
+                deep_mode_tracker.record_usage(mode_key)
 
             thread.add_exchange(
                 role=ExchangeRole.CRITIC,
@@ -479,10 +486,13 @@ Push toward depth, not toward any particular application."""
             else:
                 response = await model.send_message(synthesis_prompt, use_deep_think=use_deep)
 
-            # Check if deep mode was actually used
+            # Check if deep mode was actually used and record it
             deep_mode_used = getattr(model, 'last_deep_mode_used', False)
-            if use_deep and not deep_mode_used:
-                logger.warning(f"Deep mode requested but not available (limit may be reached)")
+            if deep_mode_used:
+                mode_key = "gemini_deep_think" if model_name == "gemini" else "chatgpt_pro"
+                deep_mode_tracker.record_usage(mode_key)
+            elif use_deep:
+                logger.warning(f"Deep mode requested but not available")
             
             # Parse the synthesis response
             title, summary, content = self._parse_synthesis(response, thread)

@@ -135,11 +135,10 @@ class ChatGPTInterface(BaseLLMInterface):
                 success = await self.enable_pro_mode()
                 if success:
                     self.last_deep_mode_used = True
-                    deep_mode_tracker.record_usage("chatgpt_pro")
                     print(f"[chatgpt] Pro mode ENABLED for this message")
-            else:
+            # If already enabled from previous message, it's still active
+            if self.pro_mode_enabled:
                 self.last_deep_mode_used = True
-                deep_mode_tracker.record_usage("chatgpt_pro")
 
         mode_str = " [PRO]" if self.last_deep_mode_used else ""
         print(f"[chatgpt]{mode_str} Sending message ({len(message)} chars)...")
