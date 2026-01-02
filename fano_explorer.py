@@ -5,6 +5,7 @@ Fano Explorer - Autonomous Multi-Agent Research System
 Usage:
     python fano_explorer.py auth      # Authenticate with ChatGPT/Gemini
     python fano_explorer.py start     # Start exploration loop
+    python fano_explorer.py backlog   # Process unextracted threads (atomic chunking + review)
     python fano_explorer.py review    # Open review interface
     python fano_explorer.py status    # Show current status
     python fano_explorer.py stop      # Graceful shutdown (or use Ctrl+C)
@@ -89,6 +90,35 @@ def cmd_start():
         console.print("[yellow]Stopped.[/yellow]")
 
 
+def cmd_backlog():
+    """Process backlog of unextracted threads."""
+    from orchestrator import Orchestrator
+
+    console.print("\n[bold]Processing backlog...[/bold]")
+    console.print("This will extract atomic insights from threads that haven't been processed yet.")
+    console.print("Press Ctrl+C to stop gracefully.\n")
+
+    orchestrator = Orchestrator()
+
+    async def run_backlog():
+        await orchestrator._connect_models()
+        try:
+            await orchestrator.process_backlog()
+        finally:
+            await orchestrator._disconnect_models()
+
+    try:
+        asyncio.run(run_backlog())
+        console.print("\n[green]✓ Backlog processing complete![/green]\n")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping...[/yellow]")
+        try:
+            asyncio.run(orchestrator.cleanup())
+        except Exception:
+            pass
+        console.print("[yellow]Stopped.[/yellow]")
+
+
 def cmd_review():
     """Start the review web interface."""
     from ui.review_server import start_server
@@ -147,6 +177,7 @@ def cmd_help():
 COMMANDS = {
     "auth": cmd_auth,
     "start": cmd_start,
+    "backlog": cmd_backlog,
     "review": cmd_review,
     "status": cmd_status,
     "help": cmd_help,

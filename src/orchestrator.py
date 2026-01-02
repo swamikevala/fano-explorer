@@ -76,15 +76,24 @@ class Orchestrator:
         # Automated reviewer (initialized after browsers connect)
         self.reviewer: Optional[AutomatedReviewer] = None
         
-    async def run(self):
-        """Main exploration loop."""
+    async def run(self, process_backlog_first: bool = True):
+        """Main exploration loop.
+
+        Args:
+            process_backlog_first: If True, process any unextracted threads before
+                                   starting the main exploration loop.
+        """
         self.running = True
         logger.info("Starting exploration loop")
-        
+
         # Connect to browsers
         await self._connect_models()
-        
+
         try:
+            # Process backlog of unextracted threads first
+            if process_backlog_first:
+                await self.process_backlog()
+
             while self.running:
                 await self._exploration_cycle()
                 await asyncio.sleep(self.config["poll_interval"])
@@ -100,7 +109,73 @@ class Orchestrator:
         """Clean up resources (called after interrupt)."""
         logger.info("Cleaning up...")
         await self._disconnect_models()
-    
+
+    async def process_backlog(self):
+        """
+        Process all threads that haven't had atomic extraction run yet.
+
+        Scans for threads where:
+        - Status is CHUNK_READY or ARCHIVED (synthesis completed)
+        - chunks_extracted is False or missing
+
+        For each such thread, runs atomic extraction and review panel.
+        """
+        logger.info("[backlog] Scanning for unprocessed threads...")
+
+        threads_dir = self.data_dir / "explorations"
+        if not threads_dir.exists():
+            logger.info("[backlog] No explorations directory found")
+            return
+
+        # Find all threads needing extraction
+        unprocessed = []
+        for filepath in threads_dir.glob("*.json"):
+            try:
+                thread = ExplorationThread.load(filepath)
+
+                # Check if thread is ready for extraction but hasn't been processed
+                if thread.status in (ThreadStatus.CHUNK_READY, ThreadStatus.ARCHIVED):
+                    if not getattr(thread, 'chunks_extracted', False):
+                        unprocessed.append(thread)
+
+            except Exception as e:
+                logger.warning(f"[backlog] Could not load {filepath}: {e}")
+
+        if not unprocessed:
+            logger.info("[backlog] No unprocessed threads found")
+            return
+
+        logger.info(f"[backlog] Found {len(unprocessed)} threads to process")
+
+        # Get an available model for extraction
+        model_name, model = self._get_backlog_model()
+        if not model:
+            logger.warning("[backlog] No model available for extraction")
+            return
+
+        # Process each thread
+        for i, thread in enumerate(unprocessed, 1):
+            logger.info(f"[backlog] Processing {i}/{len(unprocessed)}: {thread.id}")
+
+            try:
+                await self._extract_and_review(thread, model_name, model)
+            except Exception as e:
+                logger.error(f"[backlog] Failed to process {thread.id}: {e}")
+
+            # Small delay between threads to avoid rate limits
+            if i < len(unprocessed):
+                await asyncio.sleep(5)
+
+        logger.info(f"[backlog] Completed processing {len(unprocessed)} threads")
+
+    def _get_backlog_model(self) -> tuple[Optional[str], Optional[object]]:
+        """Get an available model for backlog processing."""
+        if self.gemini and rate_tracker.is_available("gemini"):
+            return ("gemini", self.gemini)
+        if self.chatgpt and rate_tracker.is_available("chatgpt"):
+            return ("chatgpt", self.chatgpt)
+        return (None, None)
+
     async def _connect_models(self):
         """Connect to LLM browser interfaces."""
         try:
