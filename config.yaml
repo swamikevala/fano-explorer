@@ -41,7 +41,16 @@ models:
         - "unavailable"
         - "try again tomorrow"
         - "quota"
+      # Deep Think overload - temporary, can retry after waiting
+      deep_think_overload_patterns:
+        - "A lot of people are using Deep Think"
+        - "need a moment to sort through"
     response_timeout: 3600  # Deep Think can be slow
+    # Retry settings for Deep Think overload
+    deep_think_retry:
+      enabled: true
+      wait_seconds: 600  # 10 minutes default
+      max_retries: 3
 
 # Model selection weights (higher = more likely to be chosen)
 # Gemini tends to explore creatively, ChatGPT tends to critique rigorously
@@ -71,6 +80,7 @@ exploration:
     - Fano plane incidence geometry (7 points, 7 lines, 3 points per line) and its related mathematical structures/geometries
     - The Yogic energy system of chakras and nadis and the 5 elements
     - Sanskrit grammar (particularly Panini's system, 14 Maheshvara Sutras)
+    - The Sriyantra or srichakra
     - Indian classical music theory (12 swaras, 22 shrutis, ragas, 72 melakartas)
     - Yogic/Tantric cosmology and practice systems:
       • Tantric texts (Vijñāna Bhairava's 112 dharanas, Tantraloka)

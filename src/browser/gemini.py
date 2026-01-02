@@ -286,6 +286,14 @@ class GeminiInterface(BaseLLMInterface):
         except Exception as e:
             print(f"[gemini] Could not start new chat: {e}")
     
+    def _check_deep_think_overload(self, response_text: str) -> bool:
+        """Check if response indicates Deep Think is temporarily overloaded."""
+        patterns = self.config.get("selectors", {}).get("deep_think_overload_patterns", [])
+        for pattern in patterns:
+            if pattern.lower() in response_text.lower():
+                return True
+        return False
+
     async def send_message(self, message: str, use_deep_think: bool = False) -> str:
         """
         Send a message to Gemini and wait for response.
@@ -317,6 +325,51 @@ class GeminiInterface(BaseLLMInterface):
         mode_str = "Deep Think" if self.deep_think_enabled else "standard"
         logger.info(f"[gemini] Sending message in {mode_str} mode ({len(message)} chars)")
 
+        # Get retry settings for Deep Think overload
+        retry_config = self.config.get("deep_think_retry", {})
+        retry_enabled = retry_config.get("enabled", True)
+        retry_wait = retry_config.get("wait_seconds", 600)  # 10 min default
+        max_retries = retry_config.get("max_retries", 3)
+
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                response = await self._send_message_once(message)
+
+                # Check for Deep Think overload (temporary, retryable)
+                if self.deep_think_enabled and self._check_deep_think_overload(response):
+                    if retry_enabled and attempt <= max_retries:
+                        logger.warning(
+                            f"[gemini] Deep Think overloaded (attempt {attempt}/{max_retries}). "
+                            f"Waiting {retry_wait}s before retry..."
+                        )
+                        print(
+                            f"[gemini] Deep Think busy - waiting {retry_wait // 60} minutes "
+                            f"before retry (attempt {attempt}/{max_retries})..."
+                        )
+                        await asyncio.sleep(retry_wait)
+                        # Start a new chat for the retry
+                        await self.start_new_chat()
+                        continue
+                    else:
+                        logger.warning("[gemini] Deep Think overloaded, max retries reached")
+                        raise RateLimitError("Deep Think overloaded after max retries")
+
+                return response
+
+            except RateLimitError:
+                raise
+            except Exception as e:
+                if attempt <= max_retries and "overload" in str(e).lower():
+                    logger.warning(f"[gemini] Retrying after error: {e}")
+                    await asyncio.sleep(retry_wait)
+                    await self.start_new_chat()
+                    continue
+                raise
+
+    async def _send_message_once(self, message: str) -> str:
+        """Send a message once (without retry logic)."""
         try:
             # Find the input area
             input_selectors = [
