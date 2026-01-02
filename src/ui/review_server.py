@@ -11,9 +11,23 @@ review pending chunks and provide feedback:
 import json
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, redirect, url_for
+import markdown
 import yaml
 
 from models import Chunk, ChunkStatus, ChunkFeedback, AxiomStore, BlessedInsight
+
+
+def render_markdown(text: str) -> str:
+    """Convert markdown to HTML with extensions."""
+    md = markdown.Markdown(
+        extensions=[
+            'fenced_code',
+            'tables',
+            'toc',
+            'nl2br',
+        ]
+    )
+    return md.convert(text)
 
 
 # Load config
@@ -25,6 +39,14 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates"
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
+
+# Register markdown filter for templates
+@app.template_filter('markdown')
+def markdown_filter(text):
+    """Jinja2 filter to render markdown as HTML."""
+    if not text:
+        return ""
+    return render_markdown(text)
 
 
 def get_pending_chunks() -> list[Chunk]:

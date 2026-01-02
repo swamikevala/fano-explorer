@@ -4,6 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fano Explorer - Review</title>
+
+    <!-- MathJax for LaTeX rendering -->
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+            }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+
     <style>
         :root {
             --bg: #0a0a0f;
@@ -121,31 +137,113 @@
             line-height: 1.7;
         }
         
-        .chunk-content h1, .chunk-content h2, .chunk-content h3 {
+        /* Markdown content styling */
+        .markdown-body h1, .markdown-body h2, .markdown-body h3,
+        .markdown-body h4, .markdown-body h5, .markdown-body h6 {
             color: var(--accent);
-            margin: 1.5rem 0 1rem;
+            margin: 1.5rem 0 0.75rem;
+            font-weight: 600;
         }
-        
-        .chunk-content h1:first-child { margin-top: 0; }
-        
-        .chunk-content code {
+
+        .markdown-body h1 { font-size: 1.6rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+        .markdown-body h2 { font-size: 1.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+        .markdown-body h3 { font-size: 1.2rem; }
+        .markdown-body h4 { font-size: 1.1rem; }
+
+        .markdown-body h1:first-child, .markdown-body h2:first-child { margin-top: 0; }
+
+        .markdown-body p {
+            margin: 0.75rem 0;
+        }
+
+        .markdown-body ul, .markdown-body ol {
+            margin: 0.75rem 0;
+            padding-left: 1.5rem;
+        }
+
+        .markdown-body li {
+            margin: 0.4rem 0;
+        }
+
+        .markdown-body li > ul, .markdown-body li > ol {
+            margin: 0.25rem 0;
+        }
+
+        .markdown-body blockquote {
+            border-left: 4px solid var(--accent);
+            margin: 1rem 0;
+            padding: 0.5rem 1rem;
+            background: rgba(0, 217, 255, 0.05);
+            color: var(--text-dim);
+        }
+
+        .markdown-body blockquote p {
+            margin: 0;
+        }
+
+        .markdown-body code {
             background: rgba(255, 255, 255, 0.1);
             padding: 0.2em 0.4em;
             border-radius: 3px;
             font-size: 0.9em;
+            font-family: 'SF Mono', 'Fira Code', monospace;
         }
-        
-        .chunk-content pre {
-            background: rgba(0, 0, 0, 0.3);
+
+        .markdown-body pre {
+            background: rgba(0, 0, 0, 0.4);
             padding: 1rem;
-            border-radius: 4px;
+            border-radius: 6px;
             overflow-x: auto;
             margin: 1rem 0;
+            border: 1px solid var(--border);
         }
-        
-        .chunk-content pre code {
+
+        .markdown-body pre code {
             background: none;
             padding: 0;
+            font-size: 0.85rem;
+        }
+
+        .markdown-body table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1rem 0;
+        }
+
+        .markdown-body th, .markdown-body td {
+            border: 1px solid var(--border);
+            padding: 0.5rem 0.75rem;
+            text-align: left;
+        }
+
+        .markdown-body th {
+            background: rgba(0, 217, 255, 0.1);
+            font-weight: 600;
+        }
+
+        .markdown-body hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 1.5rem 0;
+        }
+
+        .markdown-body strong {
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .markdown-body em {
+            color: var(--text-dim);
+        }
+
+        /* MathJax styling */
+        .MathJax {
+            font-size: 1.1em !important;
+        }
+
+        mjx-container[display="true"] {
+            margin: 1rem 0 !important;
+            overflow-x: auto;
         }
         
         .chunk-actions {
@@ -310,8 +408,8 @@
                     {{ chunk.summary }}
                 </div>
                 
-                <div class="chunk-content">
-                    {{ chunk.content | safe }}
+                <div class="chunk-content markdown-body">
+                    {{ chunk.content | markdown | safe }}
                 </div>
                 
                 <div class="chunk-actions">
@@ -411,6 +509,15 @@
         
         // Refresh stats periodically
         setInterval(updateStats, 30000);
+
+        // Trigger MathJax rendering after page load
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                MathJax.typesetPromise().catch(function (err) {
+                    console.log('MathJax typeset failed: ' + err.message);
+                });
+            }
+        });
     </script>
 </body>
 </html>
