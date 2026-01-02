@@ -21,6 +21,96 @@ class ReviewDecision(Enum):
 
 
 @dataclass
+class VerificationResult:
+    """Result of DeepSeek mathematical verification."""
+
+    # Core verdict
+    verdict: str  # "verified" | "refuted" | "unclear" | "not_applicable"
+
+    # The precise mathematical statement evaluated
+    precise_statement: str
+
+    # Evidence
+    formal_proof: Optional[str] = None      # If verified
+    counterexample: Optional[str] = None    # If refuted
+    proof_sketch: Optional[str] = None      # If unclear but partially analyzed
+
+    # Confidence in verdict (0.0 to 1.0)
+    confidence: float = 0.0
+
+    # Specific concerns or caveats
+    concerns: list[str] = field(default_factory=list)
+
+    # What was checked
+    claims_extracted: list[str] = field(default_factory=list)
+    claims_verified: list[str] = field(default_factory=list)
+    claims_refuted: list[str] = field(default_factory=list)
+    claims_unclear: list[str] = field(default_factory=list)
+
+    # Metadata
+    model_used: str = ""
+    verification_time_seconds: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "verdict": self.verdict,
+            "precise_statement": self.precise_statement,
+            "formal_proof": self.formal_proof,
+            "counterexample": self.counterexample,
+            "proof_sketch": self.proof_sketch,
+            "confidence": self.confidence,
+            "concerns": self.concerns,
+            "claims_extracted": self.claims_extracted,
+            "claims_verified": self.claims_verified,
+            "claims_refuted": self.claims_refuted,
+            "claims_unclear": self.claims_unclear,
+            "model_used": self.model_used,
+            "verification_time_seconds": self.verification_time_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "VerificationResult":
+        return cls(
+            verdict=data["verdict"],
+            precise_statement=data["precise_statement"],
+            formal_proof=data.get("formal_proof"),
+            counterexample=data.get("counterexample"),
+            proof_sketch=data.get("proof_sketch"),
+            confidence=data.get("confidence", 0.0),
+            concerns=data.get("concerns", []),
+            claims_extracted=data.get("claims_extracted", []),
+            claims_verified=data.get("claims_verified", []),
+            claims_refuted=data.get("claims_refuted", []),
+            claims_unclear=data.get("claims_unclear", []),
+            model_used=data.get("model_used", ""),
+            verification_time_seconds=data.get("verification_time_seconds", 0.0),
+        )
+
+    def summary_for_reviewers(self) -> str:
+        """Format for inclusion in Round 2 prompts."""
+        if self.verdict == "verified":
+            proof_preview = self.formal_proof[:500] + "..." if self.formal_proof and len(self.formal_proof) > 500 else self.formal_proof
+            return f"✓ MATHEMATICALLY VERIFIED (confidence: {self.confidence:.0%})\n\nProof:\n{proof_preview or 'See full proof in artifacts'}"
+        elif self.verdict == "refuted":
+            return f"✗ MATHEMATICALLY REFUTED (confidence: {self.confidence:.0%})\n\nCounterexample:\n{self.counterexample}"
+        elif self.verdict == "unclear":
+            concerns_str = "\n".join(f"  • {c}" for c in self.concerns)
+            return f"? VERIFICATION UNCLEAR\n\nConcerns:\n{concerns_str}"
+        else:
+            return "○ No mathematical claims requiring verification"
+
+    @property
+    def should_auto_reject(self) -> bool:
+        """Check if this result warrants automatic rejection."""
+        return self.verdict == "refuted" and self.confidence >= 0.8
+
+    @property
+    def has_proof_artifact(self) -> bool:
+        """Check if there's a formal proof to attach as artifact."""
+        return self.verdict == "verified" and bool(self.formal_proof)
+
+
+@dataclass
 class ReviewResponse:
     """
     A single reviewer's response in a review round.
@@ -239,6 +329,12 @@ class ChunkReview:
     review_duration_seconds: float = 0.0   # How long the review took
     reviewed_at: Optional[datetime] = None
 
+    # DeepSeek mathematical verification (between Round 1 and Round 2)
+    math_verification: Optional[VerificationResult] = None
+    math_verification_skipped: bool = False
+    math_verification_skip_reason: str = ""
+    rejection_reason: Optional[str] = None  # If auto-rejected by DeepSeek
+
     def to_dict(self) -> dict:
         return {
             "chunk_id": self.chunk_id,
@@ -253,10 +349,18 @@ class ChunkReview:
             "total_tokens_used": self.total_tokens_used,
             "review_duration_seconds": self.review_duration_seconds,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "math_verification": self.math_verification.to_dict() if self.math_verification else None,
+            "math_verification_skipped": self.math_verification_skipped,
+            "math_verification_skip_reason": self.math_verification_skip_reason,
+            "rejection_reason": self.rejection_reason,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "ChunkReview":
+        math_verification = None
+        if data.get("math_verification"):
+            math_verification = VerificationResult.from_dict(data["math_verification"])
+
         return cls(
             chunk_id=data["chunk_id"],
             rounds=[ReviewRound.from_dict(r) for r in data.get("rounds", [])],
@@ -270,6 +374,10 @@ class ChunkReview:
             total_tokens_used=data.get("total_tokens_used", 0),
             review_duration_seconds=data.get("review_duration_seconds", 0.0),
             reviewed_at=datetime.fromisoformat(data["reviewed_at"]) if data.get("reviewed_at") else None,
+            math_verification=math_verification,
+            math_verification_skipped=data.get("math_verification_skipped", False),
+            math_verification_skip_reason=data.get("math_verification_skip_reason", ""),
+            rejection_reason=data.get("rejection_reason"),
         )
 
     def save(self, base_dir: Path):

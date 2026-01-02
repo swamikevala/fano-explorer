@@ -20,6 +20,7 @@ from typing import Optional
 from .models import (
     ChunkReview,
     ReviewDecision,
+    VerificationResult,
     should_refine_vs_deliberate,
     get_rating_pattern,
 )
@@ -28,6 +29,8 @@ from .round2 import run_round2
 from .round3 import run_round3
 from .refinement import run_refinement_round, run_post_refinement_review
 from .claude_api import get_claude_reviewer, ClaudeReviewer
+from .deepseek_verifier import get_deepseek_verifier, DeepSeekVerifier
+from .math_triggers import needs_math_verification
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +72,14 @@ class AutomatedReviewer:
             logger.info("[reviewer] Claude API available")
         else:
             logger.warning("[reviewer] Claude API not available")
+
+        # Initialize DeepSeek math verifier
+        self.deepseek = get_deepseek_verifier(config)
+        if self.deepseek and self.deepseek.is_available():
+            logger.info("[reviewer] DeepSeek math verifier available")
+        else:
+            self.deepseek = None
+            logger.info("[reviewer] DeepSeek math verifier not configured")
 
         # Check we have at least 2 reviewers
         available = sum([
@@ -135,6 +146,51 @@ class AutomatedReviewer:
 
             pattern = get_rating_pattern(round1)
             logger.info(f"[reviewer] Round 1 complete: {pattern}")
+
+            # === MATHEMATICAL VERIFICATION GATE ===
+            if self.deepseek:
+                # Collect reviewer reasoning for concern detection
+                reviewer_reasoning = [
+                    (r.reasoning or "") + " " + (r.mathematical_verification or "")
+                    for r in round1.responses.values()
+                ]
+
+                # Check if verification needed
+                should_verify, verify_reason = needs_math_verification(
+                    insight=current_insight,
+                    tags=tags,
+                    reviewer_responses=reviewer_reasoning,
+                )
+
+                if should_verify:
+                    logger.info(f"[reviewer] Math verification triggered: {verify_reason}")
+
+                    verification = await self.deepseek.verify_insight(
+                        insight=current_insight,
+                        context=blessed_axioms_summary,
+                    )
+                    review.math_verification = verification
+
+                    logger.info(f"[reviewer] DeepSeek verdict: {verification.verdict} "
+                               f"(confidence: {verification.confidence:.0%})")
+
+                    # Check for auto-rejection
+                    if verification.should_auto_reject:
+                        logger.info(f"[reviewer] Auto-rejecting: mathematical claim refuted")
+                        review.rejection_reason = (
+                            f"Mathematical claim refuted by DeepSeek:\n"
+                            f"{verification.counterexample}"
+                        )
+                        review.finalize(
+                            rating="✗",
+                            unanimous=True,
+                            disputed=False,
+                        )
+                        self._save_review(review, start_time)
+                        return review
+                else:
+                    review.math_verification_skipped = True
+                    review.math_verification_skip_reason = verify_reason
 
             # Check for early exit (unanimous)
             if round1.outcome == "unanimous":
@@ -226,6 +282,7 @@ class AutomatedReviewer:
                 chatgpt_browser=self.chatgpt_browser,
                 claude_reviewer=self.claude_reviewer,
                 config=self.panel_config,
+                math_verification=review.math_verification,
             )
             review.add_round(round2)
             review.mind_changes.extend(mind_changes_r2)

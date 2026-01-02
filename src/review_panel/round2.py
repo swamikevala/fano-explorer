@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from .models import ReviewResponse, ReviewRound, MindChange
+from .models import ReviewResponse, ReviewRound, MindChange, VerificationResult
 from .prompts import build_round2_prompt, parse_round2_response
 from .claude_api import ClaudeReviewer
 
@@ -29,6 +29,7 @@ async def run_round2(
     chatgpt_browser,
     claude_reviewer: Optional[ClaudeReviewer],
     config: dict,
+    math_verification: Optional[VerificationResult] = None,
 ) -> tuple[ReviewRound, list[MindChange]]:
     """
     Run Round 2: Deep analysis with all Round 1 responses visible.
@@ -41,6 +42,7 @@ async def run_round2(
         chatgpt_browser: ChatGPTBrowser instance
         claude_reviewer: ClaudeReviewer instance
         config: Review panel configuration
+        math_verification: Optional DeepSeek verification result
 
     Returns:
         Tuple of (ReviewRound, list of MindChanges)
@@ -65,6 +67,7 @@ async def run_round2(
             claude_response=claude_r1.to_dict() if hasattr(claude_r1, 'to_dict') else claude_r1,
             this_llm="gemini",
             this_llm_round1_rating=gemini_r1.rating if hasattr(gemini_r1, 'rating') else gemini_r1.get("rating", "?"),
+            math_verification=math_verification,
         )
         tasks.append(("gemini", _deep_review_gemini(gemini_browser, prompt)))
     else:
@@ -80,6 +83,7 @@ async def run_round2(
             claude_response=claude_r1.to_dict() if hasattr(claude_r1, 'to_dict') else claude_r1,
             this_llm="chatgpt",
             this_llm_round1_rating=chatgpt_r1.rating if hasattr(chatgpt_r1, 'rating') else chatgpt_r1.get("rating", "?"),
+            math_verification=math_verification,
         )
         tasks.append(("chatgpt", _deep_review_chatgpt(chatgpt_browser, prompt)))
     else:
@@ -95,6 +99,7 @@ async def run_round2(
             claude_response=claude_r1.to_dict() if hasattr(claude_r1, 'to_dict') else claude_r1,
             this_llm="claude",
             this_llm_round1_rating=claude_r1.rating if hasattr(claude_r1, 'rating') else claude_r1.get("rating", "?"),
+            math_verification=math_verification,
         )
         tasks.append(("claude", _deep_review_claude(claude_reviewer, prompt)))
     else:

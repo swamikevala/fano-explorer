@@ -53,6 +53,10 @@ class AtomicInsight:
     reviewed_at: Optional[datetime] = None
     review_notes: str = ""
 
+    # Mathematical verification status (DeepSeek)
+    math_verified: bool = False
+    math_verification_result: Optional[dict] = None  # Serialized VerificationResult
+
     def to_dict(self) -> dict:
         """Serialize to dictionary for JSON storage."""
         return {
@@ -71,6 +75,8 @@ class AtomicInsight:
             "is_disputed": self.is_disputed,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
             "review_notes": self.review_notes,
+            "math_verified": self.math_verified,
+            "math_verification_result": self.math_verification_result,
         }
 
     @classmethod
@@ -92,6 +98,8 @@ class AtomicInsight:
             is_disputed=data.get("is_disputed", False),
             reviewed_at=datetime.fromisoformat(data["reviewed_at"]) if data.get("reviewed_at") else None,
             review_notes=data.get("review_notes", ""),
+            math_verified=data.get("math_verified", False),
+            math_verification_result=data.get("math_verification_result"),
         )
 
     @classmethod

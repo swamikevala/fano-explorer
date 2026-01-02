@@ -133,6 +133,33 @@ deduplication:
   # Use LLM to confirm duplicates (slower but more accurate)
   use_llm_confirmation: true
 
+# Mathematical verification settings (DeepSeek Prover V2 via OpenRouter)
+math_verification:
+  # Enable DeepSeek math verification (runs between Round 1 and Round 2)
+  enabled: true
+  # Environment variable containing OpenRouter API key
+  openrouter_api_key_env: "OPENROUTER_API_KEY"
+  # OpenRouter API endpoint
+  endpoint: "https://openrouter.ai/api/v1"
+  # Model to use for verification (OpenRouter model path)
+  model: "deepseek/deepseek-prover-v2"
+  # Automatically reject insights with mathematically refuted claims
+  auto_reject_refuted: true
+  # Minimum confidence (0.0-1.0) to auto-reject refuted claims
+  auto_reject_confidence_threshold: 0.8
+  # Tags that always trigger math verification
+  required_tags:
+    - proof
+    - theorem
+    - lemma
+    - corollary
+    - formula
+    - equation
+    - derivation
+    - group
+    - isomorphism
+    - automorphism
+
 # Automated review panel settings
 review_panel:
   # Enable automated LLM review panel

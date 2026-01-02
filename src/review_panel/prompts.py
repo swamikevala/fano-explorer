@@ -5,6 +5,10 @@ Prompts for each round of the three-round review process.
 """
 
 from datetime import datetime
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .models import VerificationResult
 
 
 def build_round1_prompt(
@@ -85,6 +89,7 @@ def build_round2_prompt(
     claude_response: dict,
     this_llm: str,
     this_llm_round1_rating: str,
+    math_verification: Optional["VerificationResult"] = None,
 ) -> str:
     """
     Build the Round 2 deep analysis prompt.
@@ -99,6 +104,7 @@ def build_round2_prompt(
         claude_response: Claude's Round 1 response dict
         this_llm: Which LLM is receiving this prompt
         this_llm_round1_rating: This LLM's Round 1 rating
+        math_verification: Optional DeepSeek verification result
 
     Returns:
         The formatted Round 2 prompt
@@ -108,6 +114,15 @@ def build_round2_prompt(
 - Structural analysis: {resp.get('structural_analysis', 'N/A')}
 - Naturalness: {resp.get('naturalness_assessment', 'N/A')}
 - Reasoning: {resp.get('reasoning', 'N/A')}"""
+
+    # Build math verification section if available
+    math_section = ""
+    if math_verification:
+        math_section = f"""
+
+MATHEMATICAL VERIFICATION (DeepSeek V2 Math Prover):
+{math_verification.summary_for_reviewers()}
+"""
 
     return f"""You are a rigorous mathematician engaged in collaborative truth-seeking.
 A proposed insight has received conflicting reviews. Your task is to
@@ -138,7 +153,7 @@ CLAUDE ({claude_response.get('rating', '?')}):
 {format_response(claude_response)}
 
 YOUR ROUND 1 ASSESSMENT WAS: {this_llm_round1_rating}
-
+{math_section}
 TASK:
 Consider the other perspectives seriously. They may have seen something
 you missed. But do not lower your standards - only change if genuinely persuaded.

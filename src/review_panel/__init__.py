@@ -15,6 +15,7 @@ from .models import (
     MindChange,
     ReviewDecision,
     RefinementRecord,
+    VerificationResult,
     detect_mind_changes,
     should_refine_vs_deliberate,
     get_rating_pattern,
@@ -25,6 +26,8 @@ from .round1 import run_round1
 from .round2 import run_round2
 from .round3 import run_round3
 from .refinement import run_refinement_round, run_post_refinement_review
+from .deepseek_verifier import DeepSeekVerifier, get_deepseek_verifier
+from .math_triggers import needs_math_verification, get_verification_priority
 
 __all__ = [
     # Models
@@ -34,6 +37,7 @@ __all__ = [
     "MindChange",
     "ReviewDecision",
     "RefinementRecord",
+    "VerificationResult",
     "detect_mind_changes",
     "should_refine_vs_deliberate",
     "get_rating_pattern",
@@ -42,6 +46,11 @@ __all__ = [
     # Claude API
     "ClaudeReviewer",
     "get_claude_reviewer",
+    # DeepSeek math verification
+    "DeepSeekVerifier",
+    "get_deepseek_verifier",
+    "needs_math_verification",
+    "get_verification_priority",
     # Rounds (for advanced usage)
     "run_round1",
     "run_round2",
