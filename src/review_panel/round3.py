@@ -107,7 +107,7 @@ async def run_round3(
 
     logger.info(f"[round3] Majority response: {majority_response[:100]}...")
 
-    # Step 3: Get final votes from all
+    # Step 3: Get final votes from all (passing the deliberation exchange for storage)
     final_responses, mind_changes = await _get_final_votes(
         chunk_insight=chunk_insight,
         minority_argument=minority_argument,
@@ -117,6 +117,8 @@ async def run_round3(
         gemini_browser=gemini_browser,
         chatgpt_browser=chatgpt_browser,
         claude_reviewer=claude_reviewer,
+        deliberation_minority_argument=minority_argument,
+        deliberation_majority_response=majority_response,
     )
 
     # Determine final outcome
@@ -229,6 +231,8 @@ async def _get_final_votes(
     gemini_browser,
     chatgpt_browser,
     claude_reviewer: Optional[ClaudeReviewer],
+    deliberation_minority_argument: str = "",
+    deliberation_majority_response: str = "",
 ) -> tuple[dict[str, ReviewResponse], list[MindChange]]:
     """Get final votes from all reviewers after deliberation."""
 
@@ -247,11 +251,11 @@ async def _get_final_votes(
 
         # Determine which browser/API to use
         if llm == "gemini" and gemini_browser:
-            tasks.append((llm, is_minority, _final_vote(llm, prompt, gemini_browser, None, None)))
+            tasks.append((llm, is_minority, _final_vote(llm, prompt, gemini_browser, None, None, is_minority, deliberation_minority_argument, deliberation_majority_response)))
         elif llm == "chatgpt" and chatgpt_browser:
-            tasks.append((llm, is_minority, _final_vote(llm, prompt, None, chatgpt_browser, None)))
+            tasks.append((llm, is_minority, _final_vote(llm, prompt, None, chatgpt_browser, None, is_minority, deliberation_minority_argument, deliberation_majority_response)))
         elif llm == "claude" and claude_reviewer:
-            tasks.append((llm, is_minority, _final_vote(llm, prompt, None, None, claude_reviewer)))
+            tasks.append((llm, is_minority, _final_vote(llm, prompt, None, None, claude_reviewer, is_minority, deliberation_minority_argument, deliberation_majority_response)))
         else:
             logger.warning(f"[round3] {llm} not available for final vote")
 
@@ -295,12 +299,23 @@ async def _final_vote(
     gemini_browser,
     chatgpt_browser,
     claude_reviewer: Optional[ClaudeReviewer],
+    is_minority: bool = False,
+    deliberation_minority_argument: str = "",
+    deliberation_majority_response: str = "",
 ) -> ReviewResponse:
     """Get a final vote from a single LLM."""
     response_text = await _send_to_llm(
         llm, prompt, gemini_browser, chatgpt_browser, claude_reviewer
     )
-    parsed = parse_round3_response(response_text, is_minority=True)
+    parsed = parse_round3_response(response_text, is_minority=is_minority)
+
+    # Store the deliberation exchange in the appropriate fields
+    # Minority stores their strongest argument, majority stores their response
+    strongest_arg = deliberation_minority_argument if is_minority else None
+    response_arg = deliberation_majority_response if not is_minority else None
+
+    # Get reasoning from parsed response (REASON: or ONE_SENTENCE_JUSTIFICATION:)
+    reasoning = parsed.get("reasoning", "") or parsed.get("reason", "") or parsed.get("justification", "")
 
     return ReviewResponse(
         llm=llm,
@@ -309,8 +324,10 @@ async def _final_vote(
         mathematical_verification="",
         structural_analysis="",
         naturalness_assessment="",
-        reasoning=parsed.get("response_to_argument", "") or parsed.get("strongest_argument", ""),
+        reasoning=reasoning,
         confidence="high",
+        strongest_argument=strongest_arg,
+        response_to_argument=response_arg,
         final_stance=parsed.get("final_stance"),
     )
 

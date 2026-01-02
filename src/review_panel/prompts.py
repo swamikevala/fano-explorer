@@ -489,6 +489,7 @@ def parse_round3_response(response: str, is_minority: bool) -> dict:
         "strongest_argument": "",
         "response_to_argument": "",
         "final_stance": "",
+        "reasoning": "",
     }
 
     lines = response.split("\n")
@@ -546,6 +547,16 @@ def parse_round3_response(response: str, is_minority: bool) -> dict:
                 result["rating"] = "?"
             current_field = None
             current_value = []
+        elif line_stripped.startswith("REASON:"):
+            if current_field:
+                result[current_field] = " ".join(current_value).strip()
+            current_field = "reasoning"
+            current_value = [line_stripped[7:].strip()]
+        elif line_stripped.startswith("ONE_SENTENCE_JUSTIFICATION:"):
+            if current_field:
+                result[current_field] = " ".join(current_value).strip()
+            current_field = "reasoning"
+            current_value = [line_stripped[27:].strip()]
         elif current_field and line_stripped:
             current_value.append(line_stripped)
 
