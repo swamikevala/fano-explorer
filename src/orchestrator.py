@@ -71,7 +71,7 @@ class Orchestrator:
         self.config = CONFIG["orchestration"]
 
         # Atomic chunking extractor
-        self.extractor = AtomicExtractor(config=CONFIG)
+        self.extractor = AtomicExtractor(data_dir=self.data_dir, config=CONFIG)
 
         # Automated reviewer (initialized after browsers connect)
         self.reviewer: Optional[AutomatedReviewer] = None
