@@ -237,24 +237,18 @@ class AxiomStore:
         content = f"---\n{yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)}---\n\n{insight.content}"
         filepath.write_text(content, encoding="utf-8")
     
-    def get_context_for_exploration(self, max_excerpts: int = 3, max_insights: int = 3, max_seeds: int = 10) -> str:
+    def get_context_for_exploration(self, max_seeds: int = 10) -> str:
         """
         Build context string for exploration prompts.
-        Includes relevant excerpts, numbers, seeds, and insights.
-
-        Covers four domains:
-        - Fano plane geometry
-        - Sanskrit grammar (Panini)
-        - Indian music theory
-        - Yogic/Tantric cosmology and practice
+        Based only on seed aphorisms - the user-provided starting points.
         """
         lines = []
 
-        # Add seed aphorisms first (user-provided starting points)
+        # Add seed aphorisms (user-provided starting points)
         seeds = self.get_seed_aphorisms()[:max_seeds]
         if seeds:
-            lines.append("=== SEED APHORISMS (Starting Points) ===")
-            lines.append("These are conjectured connections to explore and build upon:\n")
+            lines.append("=== SEED APHORISMS ===")
+            lines.append("These are the foundational conjectures to explore, verify, and build upon:\n")
             for seed in seeds:
                 confidence_marker = {"high": "⚡", "medium": "?", "low": "○"}.get(seed.confidence, "?")
                 lines.append(f"{confidence_marker} {seed.text}")
@@ -262,34 +256,7 @@ class AxiomStore:
                     lines.append(f"   [Tags: {', '.join(seed.tags)}]")
                 if seed.notes:
                     lines.append(f"   Note: {seed.notes}")
-
-        # Add excerpts
-        excerpts = self.get_excerpts()[:max_excerpts]
-        if excerpts:
-            lines.append("\n\n=== SOURCE TEACHINGS ===")
-            for ex in excerpts:
-                lines.append(f"\n[{ex.title}] ({ex.source})")
-                lines.append(ex.content[:1000])  # Truncate if needed
-
-        # Add target numbers
-        numbers = self.get_target_numbers()
-        if numbers:
-            lines.append("\n\n=== NUMBERS TO DECODE ===")
-            lines.append("(From music, grammar, yoga, tantra, and cosmology)")
-            for ns in numbers:
-                lines.append(f"\n{ns.description}:")
-                for name, val in ns.numbers.items():
-                    lines.append(f"  {name}: {val}")
-                if ns.notes:
-                    lines.append(f"  Notes: {ns.notes[:200]}")
-
-        # Add blessed insights
-        insights = self.get_blessed_insights()[:max_insights]
-        if insights:
-            lines.append("\n\n=== ESTABLISHED INSIGHTS ===")
-            for ins in insights:
-                lines.append(f"\n[{ins.title}]")
-                lines.append(ins.summary)
+            lines.append("")
 
         return "\n".join(lines)
     

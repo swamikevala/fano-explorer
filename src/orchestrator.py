@@ -341,69 +341,43 @@ class Orchestrator:
         return threads[:self.config["max_active_threads"]]
     
     def _spawn_new_thread(self) -> ExplorationThread:
-        """Create a new exploration thread."""
-        
-        # Get axiom context
-        excerpts = self.axioms.get_excerpts()
-        numbers = self.axioms.get_target_numbers()
-        unexplained = self.axioms.get_unexplained_numbers()
-        
-        # Prioritize unexplained numbers
-        if unexplained:
-            target = unexplained[0]
-            target_nums = [target]
-        elif numbers:
-            target_nums = [numbers[0].id]
-        else:
-            target_nums = []
-        
-        # Pick seed axioms
-        seed_ids = [ex.id for ex in excerpts[:2]] if excerpts else []
-        
-        # Generate topic based on what we're exploring
-        topic = self._generate_topic(target_nums, seed_ids)
-        
+        """Create a new exploration thread based on seed aphorisms."""
+
+        # Get seed aphorisms
+        seeds = self.axioms.get_seed_aphorisms()
+
+        # Use seed IDs and tags
+        seed_ids = [s.id for s in seeds] if seeds else []
+
+        # Generate topic from seeds
+        topic = self._generate_topic(seeds)
+
         thread = ExplorationThread.create_new(
             topic=topic,
             seed_axioms=seed_ids,
-            target_numbers=target_nums,
+            target_numbers=[],  # No longer using hardcoded target numbers
         )
-        
+
         thread.save(self.data_dir)
         return thread
-    
-    def _generate_topic(self, target_nums: list[str], seed_ids: list[str]) -> str:
-        """Generate a topic description for a new thread."""
-        # Seed questions for specific numbers
-        number_topics = {
-            "7": "How do the 7 lines of the Fano plane relate to the 7 lokas in Vedic cosmology?",
-            "14": "The 14 Maheshvara Sutras and the 14 lokas — explore geometric necessity",
-            "22": "The 22 shrutis as projective structure — why exactly 22?",
-            "24": "Samkhya's 24 tattvas — how does this enumeration arise from geometry?",
-            "25": "The 25th tattva (Purusha) as geometric completion — structural analysis",
-            "36": "Kashmir Shaivism's 36 tattvas — geometric extension of Samkhya's 24",
-            "72": "72 melakartas and 72% water — structural coincidence or deep pattern?",
-            "84": "84 asanas and 84 siddhas — why this specific number appears",
-            "108": "108 sacred repetitions — geometric basis in projective structures",
-            "112": "Vijñāna Bhairava's 112 dharanas and the 112 chakras — explore structural reasons",
-        }
 
-        if target_nums:
-            # Check if we have a specific seed question for this number
-            for num in target_nums:
-                if num in number_topics:
-                    return number_topics[num]
-            # Default for other numbers
-            return f"Exploring mathematical structure behind {', '.join(target_nums)} across Fano geometry, Sanskrit grammar, music theory, and yogic cosmology"
+    def _generate_topic(self, seeds: list) -> str:
+        """Generate a topic description from seed aphorisms."""
+        if not seeds:
+            return "Open exploration of seed aphorisms and their mathematical structures"
 
-        # Open exploration topics (rotate through these)
-        open_topics = [
-            "Open exploration of Fano plane, Sanskrit grammar, music theory, and tantric cosmology connections",
-            "How do the incidence structures of projective geometry manifest in yogic/tantric enumeration systems?",
-            "Explore the relationship between Panini's grammatical structures and the tattva hierarchies",
-            "The geometry of consciousness: connecting Fano structures to dharana techniques",
-        ]
-        return random.choice(open_topics)
+        # Collect all unique tags from seeds
+        all_tags = set()
+        for seed in seeds:
+            all_tags.update(seed.tags)
+
+        if all_tags:
+            tag_list = ", ".join(sorted(all_tags)[:5])  # Top 5 tags
+            return f"Exploring connections between: {tag_list}"
+
+        # Fallback: use first seed's text (truncated)
+        first_seed = seeds[0].text[:80]
+        return f"Exploring: {first_seed}..."
     
     async def _do_exploration(self, thread: ExplorationThread, model_name: str, model):
         """Perform an exploration step."""
@@ -525,39 +499,31 @@ class Orchestrator:
         return None
     
     def _build_exploration_prompt(self, thread: ExplorationThread) -> str:
-        """Build the prompt for exploration."""
+        """Build the prompt for exploration based on seed aphorisms."""
         context = self.axioms.get_context_for_exploration()
         date_prefix = datetime.now().strftime("[FANO %m-%d]")
 
-        # Load seed prompt from config
-        exploration_config = CONFIG.get("exploration", {})
-        intro = exploration_config.get("intro", "You are exploring mathematical connections.")
-        key_numbers = exploration_config.get("key_numbers", "")
-        goals = exploration_config.get("goals", "")
-        guidance = exploration_config.get("guidance", "")
-
         prompt_parts = [
-            f"{date_prefix} {intro.strip()}",
+            f"{date_prefix} You are exploring and developing the following seed aphorisms.",
             "",
-            "KEY NUMBERS TO DECODE:",
-            key_numbers,
+            "Your goal is to:",
+            "1. Verify or refine each conjecture through rigorous mathematical analysis",
+            "2. Find deeper structures that explain WHY these connections exist",
+            "3. Discover new connections that feel NATURAL and INEVITABLE (not forced)",
             "",
-            goals.strip(),
-            "",
-            guidance.strip(),
+            "The criterion for a good direction: does it feel DISCOVERED rather than INVENTED?",
             "",
             context,
-            "",
         ]
-        
+
         if thread.exchanges:
             prompt_parts.append("=== PREVIOUS EXPLORATION ===")
             prompt_parts.append(thread.get_context_for_prompt())
             prompt_parts.append("")
             prompt_parts.append("Build on this exploration. Go deeper. Find the structure.")
         else:
-            prompt_parts.append("Begin your exploration. What mathematical structures might connect these domains?")
-            prompt_parts.append("Focus especially on explaining why the numbers appear as they do.")
+            prompt_parts.append("Begin your exploration. Examine these seed aphorisms mathematically.")
+            prompt_parts.append("What structures and patterns emerge? What can you verify or develop?")
 
         # Add anti-bloat instructions with structured format
         prompt_parts.extend([
