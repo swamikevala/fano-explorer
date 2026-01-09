@@ -6,7 +6,9 @@ Handles Playwright setup, session persistence, and rate limit detection.
 
 import asyncio
 import json
+import logging
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -17,6 +19,13 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 # Load environment variables
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# Firewall authentication settings
+FIREWALL_DOMAIN = os.environ.get("FIREWALL_DOMAIN", "")
+FIREWALL_USERNAME = os.environ.get("FIREWALL_USERNAME", "")
+FIREWALL_PASSWORD = os.environ.get("FIREWALL_PASSWORD", "")
 
 
 # Load config - use absolute path resolution
@@ -251,11 +260,16 @@ class BaseLLMInterface:
         """Establish browser connection."""
         self.context, self.playwright = await get_browser_context(self.model_name)
         self.page = await self.context.new_page()
-        
+
         print(f"[{self.model_name}] Navigating to {self.config['url']}...")
-        await self.page.goto(self.config["url"])
-        await asyncio.sleep(3)  # Let page settle
-        
+
+        # Use firewall-aware navigation
+        success = await self._navigate_with_firewall_check(self.config["url"])
+        if not success:
+            print(f"[{self.model_name}] WARNING: Navigation may have failed due to firewall")
+
+        await asyncio.sleep(1)  # Let page settle
+
         # Log current URL (helps debug redirects)
         print(f"[{self.model_name}] Current URL: {self.page.url}")
     
@@ -317,7 +331,189 @@ class BaseLLMInterface:
             if pattern.lower() in response_text.lower():
                 return True
         return False
-    
+
+    def _is_firewall_redirect(self) -> bool:
+        """Check if current page is a firewall authentication portal."""
+        if not FIREWALL_DOMAIN or not self.page:
+            return False
+
+        current_url = self.page.url
+        # Check if the URL contains the firewall domain
+        if FIREWALL_DOMAIN in current_url:
+            logger.info(f"[{self.model_name}] Firewall redirect detected: {current_url}")
+            return True
+        return False
+
+    async def _handle_firewall_auth(self) -> bool:
+        """
+        Handle firewall authentication if we're redirected to the portal.
+
+        Returns True if authentication was successful (or not needed),
+        False if authentication failed or credentials are missing.
+        """
+        if not self._is_firewall_redirect():
+            return True  # Not a firewall redirect, nothing to do
+
+        if not FIREWALL_USERNAME or not FIREWALL_PASSWORD:
+            print(f"\n{'='*60}")
+            print(f"[{self.model_name}] FIREWALL AUTHENTICATION REQUIRED")
+            print(f"{'='*60}")
+            print(f"Your network firewall is blocking access.")
+            print(f"Please add your credentials to .env:")
+            print(f"  FIREWALL_USERNAME=your_username")
+            print(f"  FIREWALL_PASSWORD=your_password")
+            print(f"{'='*60}\n")
+            return False
+
+        print(f"[{self.model_name}] Firewall detected - authenticating...")
+        logger.info(f"[{self.model_name}] Attempting firewall authentication")
+
+        try:
+            # Wait for page to fully load
+            await asyncio.sleep(1)
+
+            # Look for common username/password input fields
+            # Try multiple selector patterns for username field
+            username_selectors = [
+                "input[name='username']",
+                "input[name='user']",
+                "input[name='uid']",
+                "input[type='text'][name*='user']",
+                "input#username",
+                "input#user",
+                "input[placeholder*='user' i]",
+                "input[placeholder*='name' i]",
+            ]
+
+            password_selectors = [
+                "input[name='password']",
+                "input[name='passwd']",
+                "input[name='pwd']",
+                "input[type='password']",
+                "input#password",
+            ]
+
+            submit_selectors = [
+                "input[type='submit']",
+                "button[type='submit']",
+                "button:has-text('Login')",
+                "button:has-text('Sign in')",
+                "button:has-text('Submit')",
+                "input[value='Login']",
+                "input[value='Submit']",
+            ]
+
+            # Find and fill username
+            username_field = None
+            for selector in username_selectors:
+                try:
+                    username_field = await self.page.query_selector(selector)
+                    if username_field and await username_field.is_visible():
+                        logger.info(f"[{self.model_name}] Found username field: {selector}")
+                        break
+                    username_field = None
+                except Exception:
+                    continue
+
+            if not username_field:
+                logger.error(f"[{self.model_name}] Could not find username field")
+                return False
+
+            # Find and fill password
+            password_field = None
+            for selector in password_selectors:
+                try:
+                    password_field = await self.page.query_selector(selector)
+                    if password_field and await password_field.is_visible():
+                        logger.info(f"[{self.model_name}] Found password field: {selector}")
+                        break
+                    password_field = None
+                except Exception:
+                    continue
+
+            if not password_field:
+                logger.error(f"[{self.model_name}] Could not find password field")
+                return False
+
+            # Enter credentials
+            await username_field.click()
+            await username_field.fill(FIREWALL_USERNAME)
+            await asyncio.sleep(0.3)
+
+            await password_field.click()
+            await password_field.fill(FIREWALL_PASSWORD)
+            await asyncio.sleep(0.3)
+
+            # Find and click submit button
+            submit_button = None
+            for selector in submit_selectors:
+                try:
+                    submit_button = await self.page.query_selector(selector)
+                    if submit_button and await submit_button.is_visible():
+                        logger.info(f"[{self.model_name}] Found submit button: {selector}")
+                        break
+                    submit_button = None
+                except Exception:
+                    continue
+
+            if submit_button:
+                await submit_button.click()
+            else:
+                # Fallback: press Enter
+                logger.info(f"[{self.model_name}] No submit button found, pressing Enter")
+                await self.page.keyboard.press("Enter")
+
+            # Wait for authentication to complete
+            print(f"[{self.model_name}] Waiting for firewall authentication...")
+            await asyncio.sleep(3)
+
+            # Check if we're still on the firewall page
+            if self._is_firewall_redirect():
+                logger.error(f"[{self.model_name}] Still on firewall page after auth attempt")
+                print(f"[{self.model_name}] Firewall authentication may have failed - still on portal")
+                return False
+
+            print(f"[{self.model_name}] Firewall authentication successful!")
+            logger.info(f"[{self.model_name}] Firewall authentication completed")
+            return True
+
+        except Exception as e:
+            logger.error(f"[{self.model_name}] Firewall auth error: {e}")
+            print(f"[{self.model_name}] Firewall authentication error: {e}")
+            return False
+
+    async def _navigate_with_firewall_check(self, url: str, max_retries: int = 2) -> bool:
+        """
+        Navigate to a URL with automatic firewall authentication handling.
+
+        Returns True if navigation was successful, False otherwise.
+        """
+        for attempt in range(max_retries + 1):
+            await self.page.goto(url)
+            await asyncio.sleep(2)  # Let page settle
+
+            # Check for firewall redirect
+            if self._is_firewall_redirect():
+                success = await self._handle_firewall_auth()
+                if success:
+                    # After auth, navigate to original URL
+                    await self.page.goto(url)
+                    await asyncio.sleep(2)
+
+                    # Verify we're not still redirected
+                    if not self._is_firewall_redirect():
+                        return True
+                    elif attempt < max_retries:
+                        print(f"[{self.model_name}] Retrying navigation (attempt {attempt + 2}/{max_retries + 1})")
+                        continue
+                else:
+                    return False
+            else:
+                # No firewall, navigation successful
+                return True
+
+        return False
+
     async def _wait_for_response(self, timeout: int = None) -> str:
         """Wait for and extract response. Override in subclasses."""
         raise NotImplementedError

@@ -482,9 +482,8 @@ class GeminiInterface(BaseLLMInterface):
             self.deep_think_enabled = False
             self._deep_think_confirmation_done = False
 
-            # Just navigate to app root - more reliable than trying to click buttons
-            await self.page.goto("https://gemini.google.com/app")
-            await asyncio.sleep(2)
+            # Use firewall-aware navigation
+            await self._navigate_with_firewall_check("https://gemini.google.com/app")
 
             # Start a new logging session
             session_id = self.chat_logger.start_session()

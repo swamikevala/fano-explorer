@@ -90,10 +90,8 @@ class ChatGPTInterface(BaseLLMInterface):
     async def start_new_chat(self):
         """Start a new conversation."""
         try:
-            # Just navigate to root - more reliable than trying to click buttons
-            # (sidebar elements often intercept clicks)
-            await self.page.goto("https://chatgpt.com/")
-            await asyncio.sleep(2)
+            # Use firewall-aware navigation
+            await self._navigate_with_firewall_check("https://chatgpt.com/")
 
             # Reset mode tracking - browser may have different default
             self._current_mode = "default"
