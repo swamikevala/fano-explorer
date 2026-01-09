@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(PYTHONIOENCODING=utf-8 ./venv/Scripts/python.exe:*)",
+      "Bash(timeout 3 ./venv/Scripts/python.exe:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nFix Windows console encoding and Database initialization bugs\n\n- Add UTF-8 stdout/stderr reconfiguration for Windows to fix UnicodeEncodeError \n  with banner''s box-drawing characters\n- Fix cmd_status() missing db_path argument when instantiating Database\n- Configure Rich console with force_terminal and legacy_windows=False\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git push:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd chat logging and fix browser automation issues\n\n- Add ChatLogger class for saving chat transcripts locally\n  - Logs saved to data/chat_logs/{model}/YYYY-MM-DD_HH-MM-SS.md\n  - Full prompt/response history with timestamps\n\n- Fix message input (use DOM manipulation instead of innerHTML)\n  - Works with Trusted Types security policies (Gemini)\n  - Prevents premature form submission on newlines\n\n- Simplify start_new_chat to use direct navigation\n  - Avoids sidebar elements intercepting clicks\n\n- Add best-effort chat renaming with session datetime\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(python -c:*)",
+      "Bash(python:*)",
+      "Bash(cat:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(pip install:*)",
+      "Bash(playwright install:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd //c \"taskkill /F /IM chrome.exe\")",
+      "Bash(timeout 20 python:*)",
+      "Bash(ls:*)",
+      "Bash(head:*)",
+      "Bash(timeout 30 python:*)"
+    ]
+  }
+}

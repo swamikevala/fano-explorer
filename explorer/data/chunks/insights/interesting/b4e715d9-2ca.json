@@ -1,0 +1,27 @@
+{
+  "id": "b4e715d9-2ca",
+  "insight": "The 12 petals of Anahata correspond precisely to the 12 triangles incident to the heart point - a number forced by Fano incidence ((6 choose 2) - 3 = 12) rather than arbitrary tradition.",
+  "confidence": "high",
+  "tags": [
+    "fano",
+    "chakras",
+    "combinatorics"
+  ],
+  "source_thread_id": "9360fe45-18c",
+  "source_exchange_indices": [],
+  "extraction_model": "panel (claude)",
+  "extracted_at": "2026-01-08T08:47:49.991143",
+  "depends_on": [
+    "seed-001",
+    "seed-005"
+  ],
+  "pending_dependencies": [],
+  "status": "interesting",
+  "rating": "?",
+  "is_disputed": false,
+  "reviewed_at": "2026-01-08T12:42:03.200544",
+  "review_notes": "",
+  "priority": 6,
+  "math_verified": false,
+  "math_verification_result": null
+}

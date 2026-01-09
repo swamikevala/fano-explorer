@@ -1,0 +1,23 @@
+{
+  "id": "5ab0ed21-92c",
+  "insight": "The 112 chakras are precisely the set of anti-flags {(T,p): p∉T} in the Fano plane, where T is a triangle and p is a point not on it, representing all possible \"detached observations\" of energy flow.",
+  "confidence": "high",
+  "tags": [
+    "fano-geometry",
+    "chakras",
+    "consciousness"
+  ],
+  "source_thread_id": "9231556d-c73",
+  "source_exchange_indices": [],
+  "extraction_model": "panel (multiple)",
+  "extracted_at": "2026-01-09T04:43:06.336936",
+  "depends_on": [],
+  "pending_dependencies": [],
+  "status": "blessed",
+  "rating": "⚡",
+  "is_disputed": false,
+  "reviewed_at": "2026-01-09T05:48:13.310037",
+  "review_notes": "",
+  "math_verified": false,
+  "math_verification_result": null
+}

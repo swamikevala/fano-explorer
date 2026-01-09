@@ -1,0 +1,24 @@
+{
+  "id": "9ef39208-374",
+  "insight": "The 112 states map exactly to the 28 vertices (Nuclear/Structure) and 84 directed edges (Tangential/Movement) of the Coxeter graph, defining the 84 \"Asanas\" not as static postures but as the fundamental movement vectors of the system. This transforms 84 from a mystical number into literal directed-motion degrees of freedom.",
+  "confidence": "high",
+  "tags": [
+    "graph-theory",
+    "yoga",
+    "fano-geometry",
+    "coxeter-graphs"
+  ],
+  "source_thread_id": "5b45b705-b90",
+  "source_exchange_indices": [],
+  "extraction_model": "panel (multiple)",
+  "extracted_at": "2026-01-07T21:14:34.483130",
+  "depends_on": [],
+  "pending_dependencies": [],
+  "status": "rejected",
+  "rating": "✗",
+  "is_disputed": false,
+  "reviewed_at": "2026-01-07T22:15:21.327028",
+  "review_notes": "",
+  "math_verified": false,
+  "math_verification_result": null
+}

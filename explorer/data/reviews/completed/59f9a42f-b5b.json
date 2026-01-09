@@ -1,0 +1,91 @@
+{
+  "chunk_id": "59f9a42f-b5b",
+  "rounds": [
+    {
+      "round_number": 1,
+      "mode": "standard",
+      "responses": {
+        "gemini": {
+          "llm": "gemini",
+          "mode": "standard",
+          "rating": "?",
+          "mathematical_verification": "Review failed",
+          "structural_analysis": "Review failed",
+          "naturalness_assessment": "Review failed",
+          "reasoning": "Error during review: Could not find Gemini input element",
+          "confidence": "low",
+          "new_information": null,
+          "changed_mind": null,
+          "previous_rating": null,
+          "strongest_argument": null,
+          "response_to_argument": null,
+          "final_stance": null
+        },
+        "chatgpt": {
+          "llm": "chatgpt",
+          "mode": "standard",
+          "rating": "?",
+          "mathematical_verification": "Review failed",
+          "structural_analysis": "Review failed",
+          "naturalness_assessment": "Review failed",
+          "reasoning": "Error during review: Could not find input element",
+          "confidence": "low",
+          "new_information": null,
+          "changed_mind": null,
+          "previous_rating": null,
+          "strongest_argument": null,
+          "response_to_argument": null,
+          "final_stance": null
+        },
+        "claude": {
+          "llm": "claude",
+          "mode": "standard",
+          "rating": "?",
+          "mathematical_verification": "Review failed",
+          "structural_analysis": "Review failed",
+          "naturalness_assessment": "Review failed",
+          "reasoning": "Error during review: Connection error.",
+          "confidence": "low",
+          "new_information": null,
+          "changed_mind": null,
+          "previous_rating": null,
+          "strongest_argument": null,
+          "response_to_argument": null,
+          "final_stance": null
+        }
+      },
+      "outcome": "unanimous",
+      "timestamp": "2026-01-09T09:27:41.642139"
+    }
+  ],
+  "refinements": [],
+  "final_version": 1,
+  "was_refined": false,
+  "final_rating": "?",
+  "is_unanimous": true,
+  "is_disputed": false,
+  "mind_changes": [],
+  "total_tokens_used": 0,
+  "review_duration_seconds": 14.10894227027893,
+  "reviewed_at": "2026-01-09T09:27:43.149705",
+  "math_verification": {
+    "verdict": "unclear",
+    "precise_statement": "The 72 Melakarta ragas are precisely the \"Bulk Flow\" states - conductive chakras where the Self-observer is not involved, providing a rigorous geometric derivation for why there are exactly 72 parent ",
+    "formal_proof": null,
+    "counterexample": null,
+    "proof_sketch": null,
+    "confidence": 0.0,
+    "concerns": [
+      "Verification error: Connection error."
+    ],
+    "claims_extracted": [],
+    "claims_verified": [],
+    "claims_refuted": [],
+    "claims_unclear": [],
+    "model_used": "deepseek/deepseek-prover-v2",
+    "verification_time_seconds": 1.5065619945526123
+  },
+  "math_verification_skipped": false,
+  "math_verification_skip_reason": "",
+  "rejection_reason": null
+}

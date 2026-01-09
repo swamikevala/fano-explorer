@@ -6,15 +6,17 @@ venv/
 .env
 
 # Browser sessions (contains login cookies - sensitive!)
-browser_data/
+explorer/browser_data/
+pool/browser_data/
 
 # Database
 *.db
 
 # Logs
 logs/*.log
-data/chat_logs/
-data/deep_mode_state.json
+explorer/logs/
+explorer/data/chat_logs/
+explorer/data/deep_mode_state.json
 
 # OS
 .DS_Store
@@ -25,6 +27,5 @@ Thumbs.db
 .idea/
 
 # Exploration data (optional - you may want to keep this)
-# data/explorations/
-# data/chunks/
-
+# explorer/data/explorations/
+# explorer/data/chunks/

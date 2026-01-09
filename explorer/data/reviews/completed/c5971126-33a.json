@@ -1,0 +1,75 @@
+{
+  "chunk_id": "c5971126-33a",
+  "rounds": [
+    {
+      "round_number": 1,
+      "mode": "standard",
+      "responses": {
+        "gemini": {
+          "llm": "gemini",
+          "mode": "standard",
+          "rating": "?",
+          "mathematical_verification": "Review failed",
+          "structural_analysis": "Review failed",
+          "naturalness_assessment": "Review failed",
+          "reasoning": "Error during review: Could not find Gemini input element",
+          "confidence": "low",
+          "new_information": null,
+          "changed_mind": null,
+          "previous_rating": null,
+          "strongest_argument": null,
+          "response_to_argument": null,
+          "final_stance": null
+        },
+        "chatgpt": {
+          "llm": "chatgpt",
+          "mode": "standard",
+          "rating": "?",
+          "mathematical_verification": "Review failed",
+          "structural_analysis": "Review failed",
+          "naturalness_assessment": "Review failed",
+          "reasoning": "Error during review: Could not find input element",
+          "confidence": "low",
+          "new_information": null,
+          "changed_mind": null,
+          "previous_rating": null,
+          "strongest_argument": null,
+          "response_to_argument": null,
+          "final_stance": null
+        },
+        "claude": {
+          "llm": "claude",
+          "mode": "standard",
+          "rating": "?",
+          "mathematical_verification": "Review failed",
+          "structural_analysis": "Review failed",
+          "naturalness_assessment": "Review failed",
+          "reasoning": "Error during review: Connection error.",
+          "confidence": "low",
+          "new_information": null,
+          "changed_mind": null,
+          "previous_rating": null,
+          "strongest_argument": null,
+          "response_to_argument": null,
+          "final_stance": null
+        }
+      },
+      "outcome": "unanimous",
+      "timestamp": "2026-01-09T09:28:09.604146"
+    }
+  ],
+  "refinements": [],
+  "final_version": 1,
+  "was_refined": false,
+  "final_rating": "?",
+  "is_unanimous": true,
+  "is_disputed": false,
+  "mind_changes": [],
+  "total_tokens_used": 0,
+  "review_duration_seconds": 12.41849660873413,
+  "reviewed_at": "2026-01-09T09:28:09.604146",
+  "math_verification": null,
+  "math_verification_skipped": true,
+  "math_verification_skip_reason": "no mathematical claims detected",
+  "rejection_reason": null
+}

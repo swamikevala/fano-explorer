@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-01-09T12:02:10.679460",
+  "clusters": [
+    {
+      "kept": "d24e8dcd-e7a",
+      "archived": [
+        "0328b75c-75e",
+        "372280b7-63f",
+        "5ab0ed21-92c",
+        "8d136b9f-0d7"
+      ]
+    },
+    {
+      "kept": "9ef39208-374",
+      "archived": [
+        "726bda6c-ef3"
+      ]
+    },
+    {
+      "kept": "dd2d1470-998",
+      "archived": [
+        "6d832d0c-880"
+      ]
+    },
+    {
+      "kept": "f17063e6-9f3",
+      "archived": [
+        "4b77ac47-18f"
+      ]
+    }
+  ],
+  "total_archived": 7
+}
