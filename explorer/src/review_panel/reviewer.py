@@ -179,6 +179,161 @@ class AutomatedReviewer:
         if available < 2:
             logger.warning(f"[reviewer] Only {available} reviewers available, need at least 2")
 
+    def _record_modification(
+        self,
+        review: ChunkReview,
+        review_round: ReviewRound,
+        current_insight: str,
+        current_version: int,
+        mod: str,
+        mod_source: str,
+        mod_rationale: str,
+        round_num: int,
+    ) -> Tuple[str, int, str, str]:
+        """
+        Record a modification that was accepted after a round.
+
+        Returns:
+            Tuple of (new_insight, new_version, accepted_modification, modification_source)
+        """
+        refinement_record = RefinementRecord(
+            from_version=current_version,
+            to_version=current_version + 1,
+            original_insight=current_insight,
+            refined_insight=mod,
+            changes_made=[mod_rationale] if mod_rationale else [f"Modification proposed during round {round_num}"],
+            addressed_critiques=[f"Modification proposed during Round {round_num} review"],
+            unresolved_issues=[],
+            refinement_confidence="medium",
+            triggered_by_ratings={llm: r.rating for llm, r in review_round.responses.items()},
+            timestamp=datetime.now(),
+            proposer=mod_source,
+            round_proposed=round_num,
+        )
+        review.add_refinement(refinement_record)
+        logger.info(f"[reviewer] Insight modified to v{current_version + 1}")
+        return mod, current_version + 1, mod, mod_source
+
+    def _handle_quota_exception(
+        self,
+        e: Exception,
+        review: ChunkReview,
+        round_num: int,
+    ) -> bool:
+        """
+        Handle Gemini quota exhaustion exception.
+
+        Returns True if it was a quota exception (caller should re-raise).
+        """
+        if not (GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted)):
+            return False
+
+        logger.error(f"[reviewer] Gemini Deep Think quota exhausted in Round {round_num}: {e}")
+
+        # Get partial round from exception if available
+        if hasattr(e, 'partial_round'):
+            partial_round = e.partial_round
+            mind_changes = getattr(e, 'mind_changes', [])
+            review.add_round(partial_round)
+            review.mind_changes.extend(mind_changes)
+            self._save_progress(review, round_num)
+
+        # Mark as paused with quota exhaustion reason
+        review.is_paused = True
+        review.paused_for_id = f"QUOTA_EXHAUSTED:{e.resume_time}"
+        logger.info(f"[reviewer] Review paused due to quota exhaustion, resume at: {e.resume_time}")
+        return True
+
+    async def _run_verification_vote(
+        self,
+        review: ChunkReview,
+        original_insight: str,
+        current_insight: str,
+        refinement_record: RefinementRecord,
+        round3: ReviewRound,
+    ) -> Tuple[str, bool]:
+        """
+        Run verification vote on a modified insight.
+
+        Returns:
+            Tuple of (final_rating, is_disputed)
+        """
+        logger.info("[reviewer] Running verification vote on modified insight")
+        print("  [⚡] Modification proposed - running verification vote...")
+
+        # Build verification prompt
+        round3_summary = build_round_summary(round3.responses, 3)
+        vote_prompt = build_round4_final_vote_prompt(
+            original_insight=original_insight,
+            modified_insight=current_insight,
+            modification_source=refinement_record.proposer,
+            modification_rationale=refinement_record.changes_made[0] if refinement_record.changes_made else "",
+            round3_summary=round3_summary,
+        )
+
+        # Run verification votes in parallel
+        vote_tasks = []
+        if self.gemini_browser:
+            vote_tasks.append(("gemini", _get_final_vote(self.gemini_browser, vote_prompt, "gemini")))
+        if self.chatgpt_browser:
+            vote_tasks.append(("chatgpt", _get_final_vote(self.chatgpt_browser, vote_prompt, "chatgpt")))
+        if self.claude_reviewer and self.claude_reviewer.is_available():
+            vote_tasks.append(("claude", _get_final_vote_claude(self.claude_reviewer, vote_prompt)))
+
+        vote_names = [t[0] for t in vote_tasks]
+        vote_coros = [t[1] for t in vote_tasks]
+
+        logger.info(f"[reviewer] Running verification votes: {vote_names}")
+        vote_results = await asyncio.gather(*vote_coros, return_exceptions=True)
+
+        # Build verification round responses
+        verification_responses = {}
+        for name, result in zip(vote_names, vote_results):
+            if isinstance(result, Exception):
+                logger.error(f"[reviewer] {name} verification vote failed: {result}")
+                verification_responses[name] = ReviewResponse(
+                    llm=name,
+                    mode="verification",
+                    rating="?",
+                    reasoning=f"Vote failed: {result}",
+                    confidence="low",
+                )
+            else:
+                verification_responses[name] = ReviewResponse(
+                    llm=name,
+                    mode="verification",
+                    rating=result["rating"],
+                    reasoning=result["reasoning"],
+                    confidence=result["confidence"],
+                )
+                logger.info(f"[reviewer] {name} verification vote: {result['rating']}")
+
+        # Create verification round
+        verification_ratings = [r.rating for r in verification_responses.values()]
+        unique_ratings = set(verification_ratings)
+        if len(unique_ratings) == 1:
+            verification_outcome = "resolved"
+        elif verification_ratings.count("⚡") >= 2 or verification_ratings.count("✗") >= 2 or verification_ratings.count("?") >= 2:
+            verification_outcome = "majority"
+        else:
+            verification_outcome = "split"
+
+        verification_round = ReviewRound(
+            round_number=4,
+            mode="verification",
+            responses=verification_responses,
+            outcome=verification_outcome,
+            timestamp=datetime.now(),
+        )
+        review.add_round(verification_round)
+
+        final_rating = verification_round.get_majority_rating() or "?"
+        is_disputed = verification_outcome != "resolved"
+        logger.info(f"[reviewer] Verification complete: {verification_ratings} -> {final_rating}")
+        print(f"  [✓] Verification: {verification_ratings} -> {final_rating}")
+
+        return final_rating, is_disputed
+
     async def review_insight(
         self,
         chunk_id: str,
@@ -354,27 +509,9 @@ class AutomatedReviewer:
                 mod, mod_source, mod_rationale = _get_modification_consensus(round1)
                 if mod:
                     logger.info(f"[reviewer] Modification accepted from {mod_source} after Round 1")
-                    # Record the modification
-                    refinement_record = RefinementRecord(
-                        from_version=current_version,
-                        to_version=current_version + 1,
-                        original_insight=current_insight,
-                        refined_insight=mod,
-                        changes_made=[mod_rationale] if mod_rationale else ["Modification proposed during review"],
-                        addressed_critiques=["Modification proposed during Round 1 review"],
-                        unresolved_issues=[],
-                        refinement_confidence="medium",
-                        triggered_by_ratings={llm: r.rating for llm, r in round1.responses.items()},
-                        timestamp=datetime.now(),
-                        proposer=mod_source,
-                        round_proposed=1,
-                    )
-                    review.add_refinement(refinement_record)
-                    current_insight = mod
-                    current_version += 1
-                    accepted_modification = mod
-                    modification_source = mod_source
-                    logger.info(f"[reviewer] Insight modified to v{current_version}")
+                    current_insight, current_version, accepted_modification, modification_source = \
+                        self._record_modification(review, round1, current_insight, current_version,
+                                                  mod, mod_source, mod_rationale, 1)
 
             # Skip Round 2 if already completed
             if len(review.rounds) >= 2:
@@ -396,25 +533,9 @@ class AutomatedReviewer:
                         modification_source=modification_source,
                     )
                 except Exception as e:
-                    # Check for Gemini quota exhaustion
-                    if GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted):
-                        logger.error(f"[reviewer] Gemini Deep Think quota exhausted: {e}")
-                        # Get partial round from exception if available
-                        if hasattr(e, 'partial_round'):
-                            round2 = e.partial_round
-                            mind_changes_r2 = getattr(e, 'mind_changes', [])
-                            review.add_round(round2)
-                            review.mind_changes.extend(mind_changes_r2)
-                            self._save_progress(review, 2)
-                        # Mark as paused with quota exhaustion reason
-                        review.is_paused = True
-                        review.paused_for_id = f"QUOTA_EXHAUSTED:{e.resume_time}"
-                        logger.info(f"[reviewer] Review paused due to quota exhaustion, resume at: {e.resume_time}")
-                        # Re-raise so the orchestrator can stop processing
+                    if self._handle_quota_exception(e, review, 2):
                         raise
-                    else:
-                        # Other errors - re-raise
-                        raise
+                    raise
 
                 review.add_round(round2)
                 review.mind_changes.extend(mind_changes_r2)
@@ -467,27 +588,9 @@ class AutomatedReviewer:
                 mod2, mod2_source, mod2_rationale = _get_modification_consensus(round2)
                 if mod2:
                     logger.info(f"[reviewer] Modification accepted from {mod2_source} after Round 2")
-                    # Record the modification
-                    refinement_record = RefinementRecord(
-                        from_version=current_version,
-                        to_version=current_version + 1,
-                        original_insight=current_insight,
-                        refined_insight=mod2,
-                        changes_made=[mod2_rationale] if mod2_rationale else ["Modification proposed during deep analysis"],
-                        addressed_critiques=["Modification proposed during Round 2 deep analysis"],
-                        unresolved_issues=[],
-                        refinement_confidence="medium",
-                        triggered_by_ratings={llm: r.rating for llm, r in round2.responses.items()},
-                        timestamp=datetime.now(),
-                        proposer=mod2_source,
-                        round_proposed=2,
-                    )
-                    review.add_refinement(refinement_record)
-                    current_insight = mod2
-                    current_version += 1
-                    accepted_modification = mod2
-                    modification_source = mod2_source
-                    logger.info(f"[reviewer] Insight modified to v{current_version}")
+                    current_insight, current_version, accepted_modification, modification_source = \
+                        self._record_modification(review, round2, current_insight, current_version,
+                                                  mod2, mod2_source, mod2_rationale, 2)
 
             # Round 3: Structured deliberation with collaborative modification
             if self.panel_config.get("round3", {}).get("enabled", True):
@@ -513,27 +616,9 @@ class AutomatedReviewer:
                             config=self.panel_config,
                         )
                     except Exception as e:
-                        # Check for Gemini quota exhaustion
-                        if GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted):
-                            logger.error(f"[reviewer] Gemini Deep Think quota exhausted in Round 3: {e}")
-                            # Get partial results from exception if available
-                            if hasattr(e, 'partial_round'):
-                                round3 = e.partial_round
-                                mind_changes_r3 = getattr(e, 'mind_changes', [])
-                                is_disputed = getattr(e, 'is_disputed', True)
-                                modified_insight = getattr(e, 'modified_insight', None)
-                                refinement_record = getattr(e, 'refinement_record', None)
-                                review.add_round(round3)
-                                review.mind_changes.extend(mind_changes_r3)
-                                self._save_progress(review, 3)
-                            # Mark as paused with quota exhaustion reason
-                            review.is_paused = True
-                            review.paused_for_id = f"QUOTA_EXHAUSTED:{e.resume_time}"
-                            logger.info(f"[reviewer] Review paused due to quota exhaustion, resume at: {e.resume_time}")
-                            # Re-raise so the orchestrator can stop processing
+                        if self._handle_quota_exception(e, review, 3):
                             raise
-                        else:
-                            raise
+                        raise
 
                     review.add_round(round3)
                     review.mind_changes.extend(mind_changes_r3)
@@ -549,87 +634,14 @@ class AutomatedReviewer:
                         logger.info(f"[reviewer] Insight modified during deliberation, now v{current_version}")
 
                         # Check if we need a verification vote on the modified insight
-                        # If not all LLMs voted ⚡, we need them to vote on the modified version
                         round3_ratings = list(round3.get_ratings().values())
                         if round3.outcome != "resolved" or "?" in round3_ratings or "✗" in round3_ratings:
-                            logger.info("[reviewer] Running verification vote on modified insight")
-                            print("  [⚡] Modification proposed - running verification vote...")
-
-                            # Build verification prompt
-                            round3_summary = build_round_summary(round3.responses, 3)
-                            vote_prompt = build_round4_final_vote_prompt(
-                                original_insight=insight_text,
-                                modified_insight=current_insight,
-                                modification_source=refinement_record.proposer,
-                                modification_rationale=refinement_record.changes_made[0] if refinement_record.changes_made else "",
-                                round3_summary=round3_summary,
+                            final_rating, is_disputed = await self._run_verification_vote(
+                                review, insight_text, current_insight, refinement_record, round3
                             )
-
-                            # Run verification votes in parallel
-                            vote_tasks = []
-                            if self.gemini_browser:
-                                vote_tasks.append(("gemini", _get_final_vote(self.gemini_browser, vote_prompt, "gemini")))
-                            if self.chatgpt_browser:
-                                vote_tasks.append(("chatgpt", _get_final_vote(self.chatgpt_browser, vote_prompt, "chatgpt")))
-                            if self.claude_reviewer and self.claude_reviewer.is_available():
-                                vote_tasks.append(("claude", _get_final_vote_claude(self.claude_reviewer, vote_prompt)))
-
-                            vote_names = [t[0] for t in vote_tasks]
-                            vote_coros = [t[1] for t in vote_tasks]
-
-                            logger.info(f"[reviewer] Running verification votes: {vote_names}")
-                            vote_results = await asyncio.gather(*vote_coros, return_exceptions=True)
-
-                            # Build verification round responses
-                            verification_responses = {}
-                            for name, result in zip(vote_names, vote_results):
-                                if isinstance(result, Exception):
-                                    logger.error(f"[reviewer] {name} verification vote failed: {result}")
-                                    verification_responses[name] = ReviewResponse(
-                                        llm=name,
-                                        mode="verification",
-                                        rating="?",
-                                        reasoning=f"Vote failed: {result}",
-                                        confidence="low",
-                                    )
-                                else:
-                                    verification_responses[name] = ReviewResponse(
-                                        llm=name,
-                                        mode="verification",
-                                        rating=result["rating"],
-                                        reasoning=result["reasoning"],
-                                        confidence=result["confidence"],
-                                    )
-                                    logger.info(f"[reviewer] {name} verification vote: {result['rating']}")
-
-                            # Create verification round
-                            verification_ratings = [r.rating for r in verification_responses.values()]
-                            unique_ratings = set(verification_ratings)
-                            if len(unique_ratings) == 1:
-                                verification_outcome = "resolved"
-                            elif verification_ratings.count("⚡") >= 2 or verification_ratings.count("✗") >= 2 or verification_ratings.count("?") >= 2:
-                                verification_outcome = "majority"
-                            else:
-                                verification_outcome = "split"
-
-                            verification_round = ReviewRound(
-                                round_number=4,
-                                mode="verification",
-                                responses=verification_responses,
-                                outcome=verification_outcome,
-                                timestamp=datetime.now(),
-                            )
-                            review.add_round(verification_round)
-
-                            # Use verification round for final rating
-                            final_rating = verification_round.get_majority_rating() or "?"
-                            is_disputed = verification_outcome not in ["resolved"]
-                            logger.info(f"[reviewer] Verification complete: {verification_ratings} -> {final_rating}")
-                            print(f"  [✓] Verification: {verification_ratings} -> {final_rating}")
-
                             review.finalize(
                                 rating=final_rating,
-                                unanimous=(verification_outcome == "resolved"),
+                                unanimous=not is_disputed,
                                 disputed=is_disputed,
                             )
                             review.final_insight_text = current_insight

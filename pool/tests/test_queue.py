@@ -202,27 +202,6 @@ class TestRequestQueue:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_peek_returns_without_removing(self, sample_request):
-        """peek returns next item without removing it."""
-        queue = RequestQueue("gemini", max_depth=10)
-        await queue.enqueue(sample_request)
-
-        peeked = await queue.peek()
-
-        assert peeked is not None
-        assert peeked.request == sample_request
-        assert queue.depth == 1  # Still in queue
-
-    @pytest.mark.asyncio
-    async def test_peek_returns_none_when_empty(self):
-        """peek returns None when queue is empty."""
-        queue = RequestQueue("gemini", max_depth=10)
-
-        result = await queue.peek()
-
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_is_empty_property(self, sample_request):
         """is_empty reflects queue state."""
         queue = RequestQueue("gemini", max_depth=10)

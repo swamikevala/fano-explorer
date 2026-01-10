@@ -22,10 +22,14 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Import from LLM library (new unified interface)
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # Add parent to find llm module
+from llm import LLMClient, GeminiAdapter, ChatGPTAdapter, PoolUnavailableError
+
+# Keep browser imports for backwards compatibility and rate tracking
 from browser import GeminiQuotaExhausted
 from browser import (
-    ChatGPTInterface,
-    GeminiInterface,
     rate_tracker,
     deep_mode_tracker,
     select_model,
@@ -74,8 +78,10 @@ class Orchestrator:
         self.db = Database(self.data_dir / "fano_explorer.db")
         self.axioms = AxiomStore(self.data_dir)
 
-        self.chatgpt: Optional[ChatGPTInterface] = None
-        self.gemini: Optional[GeminiInterface] = None
+        # LLM client (unified interface to pool + APIs)
+        self.llm_client: Optional[LLMClient] = None
+        self.chatgpt: Optional[ChatGPTAdapter] = None
+        self.gemini: Optional[GeminiAdapter] = None
 
         self.running = False
         self.config = CONFIG["orchestration"]
@@ -202,21 +208,35 @@ class Orchestrator:
         return (None, None)
 
     async def _connect_models(self):
-        """Connect to LLM browser interfaces."""
-        try:
-            self.chatgpt = ChatGPTInterface()
-            await self.chatgpt.connect()
-            logger.info("Connected to ChatGPT")
-        except Exception as e:
-            logger.warning(f"Could not connect to ChatGPT: {e}")
-            self.chatgpt = None
+        """Connect to LLMs via LLM library (pool for browsers, direct for APIs)."""
+        # Initialize LLM client
+        self.llm_client = LLMClient()
 
-        try:
-            self.gemini = GeminiInterface()
-            await self.gemini.connect()
-            logger.info("Connected to Gemini")
-        except Exception as e:
-            logger.warning(f"Could not connect to Gemini: {e}")
+        # Check if pool service is available (for browser-based LLMs)
+        pool_available = await self.llm_client.is_pool_available()
+        if not pool_available:
+            logger.warning("Pool service not available. Start it with: cd pool && python browser_pool.py start")
+            logger.warning("Browser-based LLMs (Gemini, ChatGPT) will not be available.")
+
+        # Create adapters (they use the client internally)
+        if pool_available:
+            try:
+                self.chatgpt = ChatGPTAdapter(self.llm_client)
+                await self.chatgpt.connect()
+                logger.info("Connected to ChatGPT (via pool)")
+            except Exception as e:
+                logger.warning(f"Could not connect to ChatGPT: {e}")
+                self.chatgpt = None
+
+            try:
+                self.gemini = GeminiAdapter(self.llm_client)
+                await self.gemini.connect()
+                logger.info("Connected to Gemini (via pool)")
+            except Exception as e:
+                logger.warning(f"Could not connect to Gemini: {e}")
+                self.gemini = None
+        else:
+            self.chatgpt = None
             self.gemini = None
 
         # Initialize the automated reviewer with connected browsers
@@ -256,36 +276,31 @@ class Orchestrator:
                 self.reviewer = None
     
     async def _disconnect_models(self):
-        """Disconnect from browser interfaces."""
+        """Disconnect from LLM interfaces."""
         if self.chatgpt:
             await self.chatgpt.disconnect()
         if self.gemini:
             await self.gemini.disconnect()
+        if self.llm_client:
+            await self.llm_client.close()
     
-    def _get_available_model(self) -> Optional[tuple[str, object]]:
-        """Get an available model for use."""
-        models = []
-        if self.chatgpt and rate_tracker.is_available("chatgpt"):
-            models.append(("chatgpt", self.chatgpt))
-        if self.gemini and rate_tracker.is_available("gemini"):
-            models.append(("gemini", self.gemini))
-        
-        if not models:
-            return None
-        
-        # Randomize to distribute load
-        return random.choice(models)
-    
+    def _get_available_models(self, check_rate_limits: bool = True) -> dict[str, object]:
+        """
+        Get available models as a dict.
+
+        Args:
+            check_rate_limits: If True, exclude rate-limited models. If False, return all connected models.
+        """
+        models = {}
+        if self.chatgpt and (not check_rate_limits or rate_tracker.is_available("chatgpt")):
+            models["chatgpt"] = self.chatgpt
+        if self.gemini and (not check_rate_limits or rate_tracker.is_available("gemini")):
+            models["gemini"] = self.gemini
+        return models
+
     async def _exploration_cycle(self):
         """Single cycle of the exploration loop."""
-
-        # Build available models dict
-        available_models = {}
-        if self.chatgpt and rate_tracker.is_available("chatgpt"):
-            available_models["chatgpt"] = self.chatgpt
-        if self.gemini and rate_tracker.is_available("gemini"):
-            available_models["gemini"] = self.gemini
-
+        available_models = self._get_available_models()
         logger.info(f"Available models: {list(available_models.keys())} (gemini={self.gemini is not None})")
 
         if not available_models:
@@ -518,12 +533,7 @@ class Orchestrator:
         prompt = self._build_critique_prompt(thread)
 
         # Use weighted selection for critique (prefers ChatGPT)
-        available_models = {}
-        if self.chatgpt:
-            available_models["chatgpt"] = self.chatgpt
-        if self.gemini:
-            available_models["gemini"] = self.gemini
-
+        available_models = self._get_available_models(check_rate_limits=False)
         selected = select_model("critique", available_models)
         if selected:
             critique_model_name = selected
@@ -729,12 +739,7 @@ Structure your response as:
     async def _synthesize_chunk(self, thread: ExplorationThread):
         """Synthesize a thread into a reviewable chunk."""
         # Use weighted selection for synthesis (balanced)
-        available_models = {}
-        if self.chatgpt:
-            available_models["chatgpt"] = self.chatgpt
-        if self.gemini:
-            available_models["gemini"] = self.gemini
-
+        available_models = self._get_available_models(check_rate_limits=False)
         model_name = select_model("synthesis", available_models)
         if not model_name:
             logger.warning("No model available for synthesis")
@@ -889,6 +894,109 @@ CONTENT:
 
         return structured_part.strip()
 
+    async def _extract_insights(
+        self,
+        thread: ExplorationThread,
+        model_name: str,
+        model,
+    ) -> Optional[list[AtomicInsight]]:
+        """
+        Extract and deduplicate insights from a thread.
+
+        Returns:
+            List of unique insights, or None if extraction failed/empty.
+        """
+        # Get Claude reviewer for extraction
+        claude_reviewer = None
+        if self.reviewer:
+            claude_reviewer = self.reviewer.claude_reviewer
+
+        # Get blessed insights for dependency context
+        blessed_insights = self._get_blessed_insights()
+
+        # Choose extraction method based on config
+        if self.use_panel_extraction:
+            logger.info(f"[{thread.id}] Starting PANEL extraction (all 3 LLMs)")
+            insights = await self.panel_extractor.extract_from_thread(
+                thread=thread,
+                gemini=self.gemini,
+                chatgpt=self.chatgpt,
+                claude_reviewer=claude_reviewer,
+                blessed_insights=blessed_insights,
+            )
+        else:
+            author = "Claude Opus" if claude_reviewer and claude_reviewer.is_available() else model_name
+            logger.info(f"[{thread.id}] Starting single-LLM extraction with {author}")
+            insights = await self.extractor.extract_from_thread(
+                thread=thread,
+                claude_reviewer=claude_reviewer,
+                fallback_model=model,
+                fallback_model_name=model_name,
+                blessed_insights=blessed_insights,
+            )
+
+        if not insights:
+            # Check if extraction_note indicates an error
+            if thread.extraction_note and "failed" in thread.extraction_note.lower():
+                logger.warning(f"[{thread.id}] Extraction failed, will retry: {thread.extraction_note}")
+                return None
+            logger.info(f"[{thread.id}] No insights extracted")
+            thread.extraction_note = "No insights met extraction criteria"
+            return None
+
+        logger.info(f"[{thread.id}] Extracted {len(insights)} atomic insights")
+
+        # Deduplicate insights against known blessed insights
+        if self.dedup_checker:
+            unique_insights = []
+            duplicate_count = 0
+
+            for insight in insights:
+                is_dup, dup_of_id = await self.dedup_checker.is_duplicate(
+                    new_text=insight.insight,
+                    new_id=insight.id,
+                )
+                if is_dup:
+                    logger.info(f"[{thread.id}] Skipping duplicate insight [{insight.id}] (similar to {dup_of_id})")
+                    duplicate_count += 1
+                else:
+                    unique_insights.append(insight)
+                    self.dedup_checker.add_known_insight(insight.id, insight.insight)
+
+            if duplicate_count > 0:
+                logger.info(f"[{thread.id}] Filtered out {duplicate_count} duplicate insights")
+
+            insights = unique_insights
+
+        if not insights:
+            logger.info(f"[{thread.id}] All insights were duplicates")
+            thread.extraction_note = "All insights were duplicates of existing ones"
+            return None
+
+        return insights
+
+    async def _save_and_review_insights(
+        self,
+        thread: ExplorationThread,
+        insights: list[AtomicInsight],
+    ):
+        """Save insights to disk and run automated review if enabled."""
+        chunks_dir = self.data_dir / "chunks"
+        chunks_dir.mkdir(parents=True, exist_ok=True)
+
+        for insight in insights:
+            await asyncio.to_thread(insight.save, chunks_dir)
+
+        # Run automated review if enabled
+        if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
+            blessed_summary = self._get_blessed_summary()
+            await self._review_insights(insights, blessed_summary)
+
+        # Mark thread as extracted
+        thread.chunks_extracted = True
+        await asyncio.to_thread(thread.save, self.data_dir)
+        logger.info(f"[{thread.id}] Extraction and review complete")
+
     async def _extract_and_review(
         self,
         thread: ExplorationThread,
@@ -900,11 +1008,6 @@ CONTENT:
 
         Claude Opus is the primary extraction author (best at precise articulation).
         Falls back to browser LLMs if Claude is unavailable.
-
-        Args:
-            thread: The exploration thread to extract from
-            model_name: Name of the fallback model
-            model: The fallback model instance (browser LLM)
         """
         if thread.chunks_extracted:
             logger.info(f"[{thread.id}] Already extracted, skipping")
@@ -914,111 +1017,26 @@ CONTENT:
         existing_insights = self._get_existing_insights_for_thread(thread.id)
         if existing_insights:
             logger.info(f"[{thread.id}] Found {len(existing_insights)} existing insights, skipping extraction")
-            # Just run review on existing insights if needed
             if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
                 unreviewed = [i for i in existing_insights if not getattr(i, 'reviewed_at', None)]
                 if unreviewed:
                     logger.info(f"[{thread.id}] Running review on {len(unreviewed)} unreviewed insights")
                     blessed_summary = self._get_blessed_summary()
                     await self._review_insights(unreviewed, blessed_summary)
-            # Mark as extracted
             thread.chunks_extracted = True
             thread.extraction_note = f"Resumed with {len(existing_insights)} existing insights"
             thread.save(self.data_dir)
             return
 
-        # Get Claude reviewer for extraction
-        claude_reviewer = None
-        if self.reviewer:
-            claude_reviewer = self.reviewer.claude_reviewer
-
         try:
-            # Get blessed insights for dependency context
-            blessed_insights = self._get_blessed_insights()
-
-            # Choose extraction method based on config
-            if self.use_panel_extraction:
-                logger.info(f"[{thread.id}] Starting PANEL extraction (all 3 LLMs)")
-                insights = await self.panel_extractor.extract_from_thread(
-                    thread=thread,
-                    gemini=self.gemini,
-                    chatgpt=self.chatgpt,
-                    claude_reviewer=claude_reviewer,
-                    blessed_insights=blessed_insights,
-                )
-            else:
-                author = "Claude Opus" if claude_reviewer and claude_reviewer.is_available() else model_name
-                logger.info(f"[{thread.id}] Starting single-LLM extraction with {author}")
-                insights = await self.extractor.extract_from_thread(
-                    thread=thread,
-                    claude_reviewer=claude_reviewer,
-                    fallback_model=model,
-                    fallback_model_name=model_name,
-                    blessed_insights=blessed_insights,
-                )
+            insights = await self._extract_insights(thread, model_name, model)
 
             if not insights:
-                # Check if extraction_note indicates an error (don't mark as extracted if so)
-                if thread.extraction_note and "failed" in thread.extraction_note.lower():
-                    logger.warning(f"[{thread.id}] Extraction failed, will retry: {thread.extraction_note}")
-                    thread.save(self.data_dir)
-                    return
-                # No insights but no error - genuinely empty
-                logger.info(f"[{thread.id}] No insights extracted")
                 thread.chunks_extracted = True
-                thread.extraction_note = "No insights met extraction criteria"
                 thread.save(self.data_dir)
                 return
 
-            logger.info(f"[{thread.id}] Extracted {len(insights)} atomic insights")
-
-            # Deduplicate insights against known blessed insights
-            if self.dedup_checker:
-                unique_insights = []
-                duplicate_count = 0
-
-                for insight in insights:
-                    is_dup, dup_of_id = await self.dedup_checker.is_duplicate(
-                        new_text=insight.insight,
-                        new_id=insight.id,
-                    )
-                    if is_dup:
-                        logger.info(f"[{thread.id}] Skipping duplicate insight [{insight.id}] (similar to {dup_of_id})")
-                        duplicate_count += 1
-                    else:
-                        unique_insights.append(insight)
-                        # Add to known set to catch duplicates within same batch
-                        self.dedup_checker.add_known_insight(insight.id, insight.insight)
-
-                if duplicate_count > 0:
-                    logger.info(f"[{thread.id}] Filtered out {duplicate_count} duplicate insights")
-
-                insights = unique_insights
-
-            if not insights:
-                logger.info(f"[{thread.id}] All insights were duplicates")
-                thread.chunks_extracted = True
-                thread.extraction_note = "All insights were duplicates of existing ones"
-                thread.save(self.data_dir)
-                return
-
-            # Save insights to data/chunks/
-            chunks_dir = self.data_dir / "chunks"
-            chunks_dir.mkdir(parents=True, exist_ok=True)
-
-            for insight in insights:
-                await asyncio.to_thread(insight.save, chunks_dir)
-
-            # Run automated review if enabled
-            if self.reviewer and CONFIG.get("review_panel", {}).get("enabled", False):
-                blessed_summary = self._get_blessed_summary()
-                await self._review_insights(insights, blessed_summary)
-
-            # Mark thread as extracted
-            thread.chunks_extracted = True
-            await asyncio.to_thread(thread.save, self.data_dir)
-
-            logger.info(f"[{thread.id}] Extraction and review complete")
+            await self._save_and_review_insights(thread, insights)
 
         except Exception as e:
             logger.error(f"[{thread.id}] Extraction failed: {e}")

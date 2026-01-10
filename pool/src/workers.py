@@ -31,6 +31,7 @@ class BaseWorker:
     """Base class for backend workers."""
 
     backend_name: str = "base"
+    deep_mode_method: Optional[str] = None  # Override in subclass: "enable_deep_think", "enable_pro_mode"
 
     def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
         self.config = config
@@ -38,6 +39,7 @@ class BaseWorker:
         self.queue = queue
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self.browser = None  # Set by subclasses
 
     async def start(self):
         """Start the worker."""
@@ -120,15 +122,43 @@ class BaseWorker:
         """Trigger interactive authentication. Override in subclasses."""
         raise NotImplementedError
 
+    async def _try_enable_deep_mode(self) -> bool:
+        """
+        Try to enable deep/pro mode if available and within limits.
+
+        Returns True if deep mode was successfully enabled.
+        """
+        if not self.deep_mode_method or not self.browser:
+            return False
+
+        if not self.state.can_use_deep_mode(self.backend_name):
+            log.warning("pool.deep_mode.limit_reached", backend=self.backend_name)
+            return False
+
+        try:
+            enable_fn = getattr(self.browser, self.deep_mode_method)
+            await enable_fn()
+            self.state.increment_deep_mode_usage(self.backend_name)
+            return True
+        except Exception as e:
+            log.warning("pool.deep_mode.enable_failed", backend=self.backend_name, error=str(e))
+            return False
+
+    def _check_and_mark_rate_limit(self, response_text: str):
+        """Check response for rate limiting and update state if detected."""
+        if self.browser and hasattr(self.browser, '_check_rate_limit'):
+            if self.browser._check_rate_limit(response_text):
+                self.state.mark_rate_limited(self.backend_name)
+
 
 class GeminiWorker(BaseWorker):
     """Worker for Gemini backend."""
 
     backend_name = "gemini"
+    deep_mode_method = "enable_deep_think"
 
     def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
         super().__init__(config, state, queue)
-        self.browser = None
         self._session_id = None
 
     async def connect(self):
@@ -187,30 +217,14 @@ class GeminiWorker(BaseWorker):
         deep_mode_used = False
 
         try:
-            # Start new chat if requested
             if request.options.new_chat:
                 await self.browser.start_new_chat()
 
-            # Enable deep mode if requested and available
             if request.options.deep_mode:
-                if self.state.can_use_deep_mode(self.backend_name):
-                    try:
-                        await self.browser.enable_deep_think()
-                        deep_mode_used = True
-                        self.state.increment_deep_mode_usage(self.backend_name)
-                    except Exception as e:
-                        log.warning("pool.deep_mode.enable_failed", backend=self.backend_name, error=str(e))
-                else:
-                    log.warning("pool.deep_mode.limit_reached", backend=self.backend_name)
+                deep_mode_used = await self._try_enable_deep_mode()
 
-            # Send the prompt
             response_text = await self.browser.send_message(request.prompt)
-
-            # Check for rate limiting in response
-            if self.browser._check_rate_limit(response_text):
-                self.state.mark_rate_limited(self.backend_name)
-
-            elapsed = time.time() - start_time
+            self._check_and_mark_rate_limit(response_text)
 
             return SendResponse(
                 success=True,
@@ -218,7 +232,7 @@ class GeminiWorker(BaseWorker):
                 metadata=ResponseMetadata(
                     backend=self.backend_name,
                     deep_mode_used=deep_mode_used,
-                    response_time_seconds=elapsed,
+                    response_time_seconds=time.time() - start_time,
                     session_id=self.browser.chat_logger.get_session_id(),
                 ),
             )
@@ -236,10 +250,10 @@ class ChatGPTWorker(BaseWorker):
     """Worker for ChatGPT backend."""
 
     backend_name = "chatgpt"
+    deep_mode_method = "enable_pro_mode"
 
     def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
         super().__init__(config, state, queue)
-        self.browser = None
 
     async def connect(self):
         """Connect to ChatGPT."""
@@ -286,36 +300,25 @@ class ChatGPTWorker(BaseWorker):
             )
 
         start_time = time.time()
-        pro_mode_used = False
+        deep_mode_used = False
 
         try:
             if request.options.new_chat:
                 await self.browser.start_new_chat()
 
-            # Enable pro mode if requested
             if request.options.deep_mode:
-                if self.state.can_use_deep_mode(self.backend_name):
-                    try:
-                        await self.browser.enable_pro_mode()
-                        pro_mode_used = True
-                        self.state.increment_deep_mode_usage(self.backend_name)
-                    except Exception as e:
-                        log.warning("pool.pro_mode.enable_failed", backend=self.backend_name, error=str(e))
+                deep_mode_used = await self._try_enable_deep_mode()
 
             response_text = await self.browser.send_message(request.prompt)
-
-            if self.browser._check_rate_limit(response_text):
-                self.state.mark_rate_limited(self.backend_name)
-
-            elapsed = time.time() - start_time
+            self._check_and_mark_rate_limit(response_text)
 
             return SendResponse(
                 success=True,
                 response=response_text,
                 metadata=ResponseMetadata(
                     backend=self.backend_name,
-                    deep_mode_used=pro_mode_used,
-                    response_time_seconds=elapsed,
+                    deep_mode_used=deep_mode_used,
+                    response_time_seconds=time.time() - start_time,
                     session_id=self.browser.chat_logger.get_session_id(),
                 ),
             )

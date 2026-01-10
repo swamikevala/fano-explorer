@@ -15,6 +15,12 @@ from shared.logging import get_logger
 
 log = get_logger("pool", "state")
 
+# Map backend to its deep/pro mode key prefix
+BACKEND_MODE_KEY = {
+    "gemini": "deep_mode",
+    "chatgpt": "pro_mode",
+}
+
 
 class StateManager:
     """
@@ -82,24 +88,23 @@ class StateManager:
     def get_backend_state(self, backend: str) -> dict:
         """Get state for a backend."""
         with self._lock:
-            state = self._state.get(backend, {}).copy()
+            if backend not in self._state:
+                return {}
 
             # Check rate limit expiry
-            if state.get("rate_limited") and state.get("rate_limit_resets_at"):
-                reset_at = datetime.fromisoformat(state["rate_limit_resets_at"])
+            backend_state = self._state[backend]
+            if backend_state.get("rate_limited") and backend_state.get("rate_limit_resets_at"):
+                reset_at = datetime.fromisoformat(backend_state["rate_limit_resets_at"])
                 if datetime.now() >= reset_at:
-                    self._state[backend]["rate_limited"] = False
-                    self._state[backend]["rate_limit_resets_at"] = None
+                    backend_state["rate_limited"] = False
+                    backend_state["rate_limit_resets_at"] = None
                     self._save()
-                    state["rate_limited"] = False
 
             # Check daily reset for deep/pro mode
-            if backend == "gemini":
-                self._check_daily_reset(backend, "deep_mode")
-            elif backend == "chatgpt":
-                self._check_daily_reset(backend, "pro_mode")
+            if backend in BACKEND_MODE_KEY:
+                self._check_daily_reset(backend, BACKEND_MODE_KEY[backend])
 
-            return self._state.get(backend, {}).copy()
+            return backend_state.copy()
 
     def mark_authenticated(self, backend: str, authenticated: bool = True):
         """Mark a backend as authenticated or not."""
@@ -128,28 +133,22 @@ class StateManager:
     def increment_deep_mode_usage(self, backend: str):
         """Increment deep/pro mode usage counter."""
         with self._lock:
-            if backend == "gemini":
-                self._check_daily_reset(backend, "deep_mode")
-                self._state[backend]["deep_mode_uses_today"] += 1
-            elif backend == "chatgpt":
-                self._check_daily_reset(backend, "pro_mode")
-                self._state[backend]["pro_mode_uses_today"] += 1
-            self._save()
+            if backend in BACKEND_MODE_KEY:
+                mode_key = BACKEND_MODE_KEY[backend]
+                self._check_daily_reset(backend, mode_key)
+                self._state[backend][f"{mode_key}_uses_today"] += 1
+                self._save()
 
     def can_use_deep_mode(self, backend: str) -> bool:
         """Check if deep/pro mode can be used (under daily limit)."""
         with self._lock:
-            if backend == "gemini":
-                self._check_daily_reset(backend, "deep_mode")
-                limit = self.config.get("backends", {}).get("gemini", {}).get("deep_mode", {}).get("daily_limit", 20)
-                uses = self._state[backend].get("deep_mode_uses_today", 0)
-                return uses < limit
-            elif backend == "chatgpt":
-                self._check_daily_reset(backend, "pro_mode")
-                limit = self.config.get("backends", {}).get("chatgpt", {}).get("pro_mode", {}).get("daily_limit", 100)
-                uses = self._state[backend].get("pro_mode_uses_today", 0)
-                return uses < limit
-            return True
+            if backend not in BACKEND_MODE_KEY:
+                return True
+            mode_key = BACKEND_MODE_KEY[backend]
+            self._check_daily_reset(backend, mode_key)
+            limit = self.config.get("backends", {}).get(backend, {}).get(mode_key, {}).get("daily_limit", 20)
+            uses = self._state[backend].get(f"{mode_key}_uses_today", 0)
+            return uses < limit
 
     def is_available(self, backend: str) -> bool:
         """Check if a backend is available (authenticated and not rate limited)."""

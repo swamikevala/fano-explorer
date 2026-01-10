@@ -27,6 +27,20 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _to_dict(obj) -> dict:
+    """Convert response object to dict, handling both objects and dicts."""
+    if hasattr(obj, 'to_dict'):
+        return obj.to_dict()
+    return obj
+
+
+def _get_rating(obj) -> str:
+    """Get rating from response object or dict."""
+    if hasattr(obj, 'rating'):
+        return obj.rating
+    return obj.get("rating", "?")
+
+
 async def run_round2(
     chunk_insight: str,
     blessed_axioms_summary: str,
@@ -74,11 +88,11 @@ async def run_round2(
         prompt = build_round2_prompt(
             chunk_insight=chunk_insight,
             blessed_axioms_summary=blessed_axioms_summary,
-            gemini_response=gemini_r1.to_dict() if hasattr(gemini_r1, 'to_dict') else gemini_r1,
-            chatgpt_response=chatgpt_r1.to_dict() if hasattr(chatgpt_r1, 'to_dict') else chatgpt_r1,
-            claude_response=claude_r1.to_dict() if hasattr(claude_r1, 'to_dict') else claude_r1,
+            gemini_response=_to_dict(gemini_r1),
+            chatgpt_response=_to_dict(chatgpt_r1),
+            claude_response=_to_dict(claude_r1),
             this_llm="gemini",
-            this_llm_round1_rating=gemini_r1.rating if hasattr(gemini_r1, 'rating') else gemini_r1.get("rating", "?"),
+            this_llm_round1_rating=_get_rating(gemini_r1),
             math_verification=math_verification,
             accepted_modification=accepted_modification,
             modification_source=modification_source,
@@ -92,11 +106,11 @@ async def run_round2(
         prompt = build_round2_prompt(
             chunk_insight=chunk_insight,
             blessed_axioms_summary=blessed_axioms_summary,
-            gemini_response=gemini_r1.to_dict() if hasattr(gemini_r1, 'to_dict') else gemini_r1,
-            chatgpt_response=chatgpt_r1.to_dict() if hasattr(chatgpt_r1, 'to_dict') else chatgpt_r1,
-            claude_response=claude_r1.to_dict() if hasattr(claude_r1, 'to_dict') else claude_r1,
+            gemini_response=_to_dict(gemini_r1),
+            chatgpt_response=_to_dict(chatgpt_r1),
+            claude_response=_to_dict(claude_r1),
             this_llm="chatgpt",
-            this_llm_round1_rating=chatgpt_r1.rating if hasattr(chatgpt_r1, 'rating') else chatgpt_r1.get("rating", "?"),
+            this_llm_round1_rating=_get_rating(chatgpt_r1),
             math_verification=math_verification,
             accepted_modification=accepted_modification,
             modification_source=modification_source,
@@ -110,11 +124,11 @@ async def run_round2(
         prompt = build_round2_prompt(
             chunk_insight=chunk_insight,
             blessed_axioms_summary=blessed_axioms_summary,
-            gemini_response=gemini_r1.to_dict() if hasattr(gemini_r1, 'to_dict') else gemini_r1,
-            chatgpt_response=chatgpt_r1.to_dict() if hasattr(chatgpt_r1, 'to_dict') else chatgpt_r1,
-            claude_response=claude_r1.to_dict() if hasattr(claude_r1, 'to_dict') else claude_r1,
+            gemini_response=_to_dict(gemini_r1),
+            chatgpt_response=_to_dict(chatgpt_r1),
+            claude_response=_to_dict(claude_r1),
             this_llm="claude",
-            this_llm_round1_rating=claude_r1.rating if hasattr(claude_r1, 'rating') else claude_r1.get("rating", "?"),
+            this_llm_round1_rating=_get_rating(claude_r1),
             math_verification=math_verification,
             accepted_modification=accepted_modification,
             modification_source=modification_source,

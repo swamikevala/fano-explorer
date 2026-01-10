@@ -94,13 +94,6 @@ class RequestQueue:
                 return None
             return heappop(self._queue)
 
-    async def peek(self) -> Optional[QueuedRequest]:
-        """Look at the next request without removing it."""
-        async with self._lock:
-            if not self._queue:
-                return None
-            return self._queue[0]
-
     @property
     def depth(self) -> int:
         """Current queue depth."""

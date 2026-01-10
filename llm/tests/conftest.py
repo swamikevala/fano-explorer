@@ -1,5 +1,32 @@
 """Shared fixtures for LLM library tests."""
 
+import sys
+from pathlib import Path
+
+_llm_path = str(Path(__file__).parent.parent)
+
+
+def pytest_configure(config):
+    """
+    Called before test collection. Sets up paths for llm package imports.
+    This hook runs before modules are collected, allowing proper path setup.
+    """
+    # Remove any existing 'src' module to avoid conflicts with pool/src
+    for mod_name in list(sys.modules.keys()):
+        if mod_name == 'src' or mod_name.startswith('src.'):
+            del sys.modules[mod_name]
+
+    # Ensure llm path is at the front
+    if _llm_path in sys.path:
+        sys.path.remove(_llm_path)
+    sys.path.insert(0, _llm_path)
+
+
+# Also set path at module load time for direct imports
+if _llm_path in sys.path:
+    sys.path.remove(_llm_path)
+sys.path.insert(0, _llm_path)
+
 import asyncio
 from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock
