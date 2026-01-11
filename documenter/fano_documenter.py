@@ -36,9 +36,8 @@ if sys.platform == "win32":
         except Exception:
             pass
 
-# Add parent to path for imports
+# FANO_ROOT for resolving relative paths in config
 FANO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(FANO_ROOT))
 
 from rich.console import Console
 from rich.panel import Panel

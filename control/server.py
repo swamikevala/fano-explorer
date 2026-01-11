@@ -73,8 +73,7 @@ FANO_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = FANO_ROOT / "logs"
 EXPLORER_DATA_DIR = FANO_ROOT / "explorer" / "data"
 
-# Add explorer to path for imports
-sys.path.insert(0, str(FANO_ROOT / "explorer" / "src"))
+# No longer need sys.path manipulation - using proper package imports
 
 
 def render_markdown_content(text: str) -> str:
@@ -491,7 +490,6 @@ def create_app() -> Flask:
         doc_path = FANO_ROOT / "documenter" / "document" / "main.md"
         try:
             # Import here to avoid circular imports
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.versions import VersionManager
 
             vm = VersionManager(doc_path)
@@ -508,7 +506,6 @@ def create_app() -> Flask:
         """Get a specific document version."""
         doc_path = FANO_ROOT / "documenter" / "document" / "main.md"
         try:
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.versions import VersionManager
 
             vm = VersionManager(doc_path)
@@ -529,7 +526,6 @@ def create_app() -> Flask:
         """Revert document to a specific version."""
         doc_path = FANO_ROOT / "documenter" / "document" / "main.md"
         try:
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.versions import VersionManager
 
             vm = VersionManager(doc_path)
@@ -585,7 +581,6 @@ def create_app() -> Flask:
         """Background worker for formatting fix."""
         doc_path = FANO_ROOT / "documenter" / "document" / "main.md"
         try:
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.document import Document
             from documenter.formatting import detect_formatting_issues, build_formatting_fix_prompt
 
@@ -713,7 +708,6 @@ def create_app() -> Flask:
         """Get all annotations."""
         doc_path = FANO_ROOT / "documenter" / "document" / "main.md"
         try:
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.annotations import AnnotationManager
             from documenter.document import Document
 
@@ -760,7 +754,6 @@ def create_app() -> Flask:
             if ann_type == "comment" and not content:
                 return jsonify({"error": "Comment content is required"}), 400
 
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.annotations import AnnotationManager
             from documenter.document import Document
 
@@ -786,7 +779,6 @@ def create_app() -> Flask:
         """Delete an annotation and its marker."""
         doc_path = FANO_ROOT / "documenter" / "document" / "main.md"
         try:
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.annotations import AnnotationManager
             from documenter.document import Document
 
@@ -821,7 +813,6 @@ def create_app() -> Flask:
             if not content:
                 return jsonify({"error": "Comment content is required"}), 400
 
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.annotations import AnnotationManager
             from documenter.document import Document
 
@@ -853,7 +844,6 @@ def create_app() -> Flask:
             text_preview = data.get("text_preview", selected_text[:50])
             search_text = data.get("search_text", selected_text)
 
-            sys.path.insert(0, str(FANO_ROOT))
             from documenter.annotations import AnnotationManager
             from documenter.document import Document
 

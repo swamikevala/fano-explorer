@@ -3,11 +3,7 @@
 import pytest
 from datetime import datetime
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.models import (
+from llm.src.models import (
     Backend,
     Priority,
     LLMResponse,

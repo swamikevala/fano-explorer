@@ -1,15 +1,10 @@
 """State management for the Browser Pool Service."""
 
 import json
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from threading import Lock
-
-# Add shared module to path
-SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
-sys.path.insert(0, str(SHARED_PATH.parent))
 
 from shared.logging import get_logger
 

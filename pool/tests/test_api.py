@@ -6,15 +6,12 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.api import BrowserPool, create_app
-from src.models import (
+from pool.src.api import BrowserPool, create_app
+from pool.src.models import (
     SendRequest, SendResponse, SendOptions,
     Backend, Priority, PoolStatus, BackendStatus,
 )
-from src.queue import QueueFullError
+from pool.src.queue import QueueFullError
 
 
 @pytest.fixture
@@ -57,7 +54,7 @@ class TestBrowserPoolInit:
 
     def test_init_creates_state_manager(self, sample_config, tmp_path):
         """BrowserPool creates a StateManager."""
-        with patch("src.api.Path") as mock_path:
+        with patch("pool.src.api.Path") as mock_path:
             mock_path.return_value.parent.parent = tmp_path
             pool = BrowserPool(sample_config)
 
@@ -65,17 +62,17 @@ class TestBrowserPoolInit:
 
     def test_init_creates_queue_manager(self, sample_config):
         """BrowserPool creates a QueueManager."""
-        with patch("src.api.StateManager"):
+        with patch("pool.src.api.StateManager"):
             pool = BrowserPool(sample_config)
 
             assert pool.queues is not None
 
     def test_init_creates_enabled_workers(self, sample_config):
         """BrowserPool creates workers for enabled backends."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.GeminiWorker"):
-                with patch("src.api.ChatGPTWorker"):
-                    with patch("src.api.ClaudeWorker"):
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.GeminiWorker"):
+                with patch("pool.src.api.ChatGPTWorker"):
+                    with patch("pool.src.api.ClaudeWorker"):
                         pool = BrowserPool(sample_config)
 
                         assert "gemini" in pool.workers
@@ -84,8 +81,8 @@ class TestBrowserPoolInit:
 
     def test_init_skips_disabled_workers(self, minimal_config):
         """BrowserPool skips workers for disabled backends."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.ClaudeWorker"):
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.ClaudeWorker"):
                 pool = BrowserPool(minimal_config)
 
                 assert "gemini" not in pool.workers
@@ -99,8 +96,8 @@ class TestBrowserPoolSend:
     @pytest.mark.asyncio
     async def test_send_returns_error_for_disabled_backend(self, minimal_config):
         """send() returns error for disabled backend."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.ClaudeWorker"):
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.ClaudeWorker"):
                 pool = BrowserPool(minimal_config)
 
                 request = SendRequest(
@@ -117,15 +114,15 @@ class TestBrowserPoolSend:
     @pytest.mark.asyncio
     async def test_send_returns_auth_required_when_not_authenticated(self, sample_config):
         """send() returns auth_required when backend not authenticated."""
-        with patch("src.api.StateManager") as mock_state_cls:
+        with patch("pool.src.api.StateManager") as mock_state_cls:
             mock_state = MagicMock()
             mock_state.is_available.return_value = False
             mock_state.get_backend_state.return_value = {"authenticated": False, "rate_limited": False}
             mock_state_cls.return_value = mock_state
 
-            with patch("src.api.GeminiWorker"):
-                with patch("src.api.ChatGPTWorker"):
-                    with patch("src.api.ClaudeWorker"):
+            with patch("pool.src.api.GeminiWorker"):
+                with patch("pool.src.api.ChatGPTWorker"):
+                    with patch("pool.src.api.ClaudeWorker"):
                         pool = BrowserPool(sample_config)
 
                         request = SendRequest(
@@ -141,15 +138,15 @@ class TestBrowserPoolSend:
     @pytest.mark.asyncio
     async def test_send_returns_rate_limited(self, sample_config):
         """send() returns rate_limited when backend is rate limited."""
-        with patch("src.api.StateManager") as mock_state_cls:
+        with patch("pool.src.api.StateManager") as mock_state_cls:
             mock_state = MagicMock()
             mock_state.is_available.return_value = False
             mock_state.get_backend_state.return_value = {"authenticated": True, "rate_limited": True}
             mock_state_cls.return_value = mock_state
 
-            with patch("src.api.GeminiWorker"):
-                with patch("src.api.ChatGPTWorker"):
-                    with patch("src.api.ClaudeWorker"):
+            with patch("pool.src.api.GeminiWorker"):
+                with patch("pool.src.api.ChatGPTWorker"):
+                    with patch("pool.src.api.ClaudeWorker"):
                         pool = BrowserPool(sample_config)
 
                         request = SendRequest(
@@ -166,21 +163,21 @@ class TestBrowserPoolSend:
     @pytest.mark.asyncio
     async def test_send_returns_queue_full_error(self, sample_config):
         """send() returns queue_full when queue is at capacity."""
-        with patch("src.api.StateManager") as mock_state_cls:
+        with patch("pool.src.api.StateManager") as mock_state_cls:
             mock_state = MagicMock()
             mock_state.is_available.return_value = True
             mock_state_cls.return_value = mock_state
 
-            with patch("src.api.QueueManager") as mock_queue_cls:
+            with patch("pool.src.api.QueueManager") as mock_queue_cls:
                 mock_queue = MagicMock()
                 mock_queue.enqueue = AsyncMock(side_effect=QueueFullError("Queue full"))
                 mock_queue_manager = MagicMock()
                 mock_queue_manager.get_queue.return_value = mock_queue
                 mock_queue_cls.return_value = mock_queue_manager
 
-                with patch("src.api.GeminiWorker"):
-                    with patch("src.api.ChatGPTWorker"):
-                        with patch("src.api.ClaudeWorker"):
+                with patch("pool.src.api.GeminiWorker"):
+                    with patch("pool.src.api.ChatGPTWorker"):
+                        with patch("pool.src.api.ClaudeWorker"):
                             pool = BrowserPool(sample_config)
                             pool.queues = mock_queue_manager
 
@@ -197,12 +194,12 @@ class TestBrowserPoolSend:
     @pytest.mark.asyncio
     async def test_send_returns_timeout_error(self, sample_config):
         """send() returns timeout when request times out."""
-        with patch("src.api.StateManager") as mock_state_cls:
+        with patch("pool.src.api.StateManager") as mock_state_cls:
             mock_state = MagicMock()
             mock_state.is_available.return_value = True
             mock_state_cls.return_value = mock_state
 
-            with patch("src.api.QueueManager") as mock_queue_cls:
+            with patch("pool.src.api.QueueManager") as mock_queue_cls:
                 # Create a future that never resolves
                 never_resolving_future = asyncio.Future()
                 mock_queue = MagicMock()
@@ -211,9 +208,9 @@ class TestBrowserPoolSend:
                 mock_queue_manager.get_queue.return_value = mock_queue
                 mock_queue_cls.return_value = mock_queue_manager
 
-                with patch("src.api.GeminiWorker"):
-                    with patch("src.api.ChatGPTWorker"):
-                        with patch("src.api.ClaudeWorker"):
+                with patch("pool.src.api.GeminiWorker"):
+                    with patch("pool.src.api.ChatGPTWorker"):
+                        with patch("pool.src.api.ClaudeWorker"):
                             pool = BrowserPool(sample_config)
                             pool.queues = mock_queue_manager
 
@@ -231,12 +228,12 @@ class TestBrowserPoolSend:
     @pytest.mark.asyncio
     async def test_send_returns_success(self, sample_config):
         """send() returns successful response."""
-        with patch("src.api.StateManager") as mock_state_cls:
+        with patch("pool.src.api.StateManager") as mock_state_cls:
             mock_state = MagicMock()
             mock_state.is_available.return_value = True
             mock_state_cls.return_value = mock_state
 
-            with patch("src.api.QueueManager") as mock_queue_cls:
+            with patch("pool.src.api.QueueManager") as mock_queue_cls:
                 # Create a future that resolves immediately
                 future = asyncio.Future()
                 expected_response = SendResponse(success=True, response="Hello!")
@@ -248,9 +245,9 @@ class TestBrowserPoolSend:
                 mock_queue_manager.get_queue.return_value = mock_queue
                 mock_queue_cls.return_value = mock_queue_manager
 
-                with patch("src.api.GeminiWorker"):
-                    with patch("src.api.ChatGPTWorker"):
-                        with patch("src.api.ClaudeWorker"):
+                with patch("pool.src.api.GeminiWorker"):
+                    with patch("pool.src.api.ChatGPTWorker"):
+                        with patch("pool.src.api.ClaudeWorker"):
                             pool = BrowserPool(sample_config)
                             pool.queues = mock_queue_manager
 
@@ -270,7 +267,7 @@ class TestBrowserPoolGetStatus:
 
     def test_get_status_returns_pool_status(self, sample_config):
         """get_status() returns PoolStatus object."""
-        with patch("src.api.StateManager") as mock_state_cls:
+        with patch("pool.src.api.StateManager") as mock_state_cls:
             mock_state = MagicMock()
             mock_state.get_backend_state.return_value = {
                 "authenticated": True,
@@ -280,7 +277,7 @@ class TestBrowserPoolGetStatus:
             mock_state.is_available.return_value = True
             mock_state_cls.return_value = mock_state
 
-            with patch("src.api.QueueManager") as mock_queue_cls:
+            with patch("pool.src.api.QueueManager") as mock_queue_cls:
                 mock_queue_manager = MagicMock()
                 mock_queue_manager.get_depths.return_value = {
                     "gemini": 2,
@@ -289,9 +286,9 @@ class TestBrowserPoolGetStatus:
                 }
                 mock_queue_cls.return_value = mock_queue_manager
 
-                with patch("src.api.GeminiWorker"):
-                    with patch("src.api.ChatGPTWorker"):
-                        with patch("src.api.ClaudeWorker"):
+                with patch("pool.src.api.GeminiWorker"):
+                    with patch("pool.src.api.ChatGPTWorker"):
+                        with patch("pool.src.api.ClaudeWorker"):
                             pool = BrowserPool(sample_config)
 
                             status = pool.get_status()
@@ -303,13 +300,13 @@ class TestBrowserPoolGetStatus:
 
     def test_get_status_includes_queue_depths(self, sample_config):
         """get_status() includes queue depths."""
-        with patch("src.api.StateManager") as mock_state_cls:
+        with patch("pool.src.api.StateManager") as mock_state_cls:
             mock_state = MagicMock()
             mock_state.get_backend_state.return_value = {"authenticated": True, "rate_limited": False}
             mock_state.is_available.return_value = True
             mock_state_cls.return_value = mock_state
 
-            with patch("src.api.QueueManager") as mock_queue_cls:
+            with patch("pool.src.api.QueueManager") as mock_queue_cls:
                 mock_queue_manager = MagicMock()
                 mock_queue_manager.get_depths.return_value = {
                     "gemini": 5,
@@ -318,9 +315,9 @@ class TestBrowserPoolGetStatus:
                 }
                 mock_queue_cls.return_value = mock_queue_manager
 
-                with patch("src.api.GeminiWorker"):
-                    with patch("src.api.ChatGPTWorker"):
-                        with patch("src.api.ClaudeWorker"):
+                with patch("pool.src.api.GeminiWorker"):
+                    with patch("pool.src.api.ChatGPTWorker"):
+                        with patch("pool.src.api.ClaudeWorker"):
                             pool = BrowserPool(sample_config)
 
                             status = pool.get_status()
@@ -336,10 +333,10 @@ class TestBrowserPoolAuthenticate:
     @pytest.mark.asyncio
     async def test_authenticate_returns_false_for_unknown_backend(self, sample_config):
         """authenticate() returns False for unknown backend."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.GeminiWorker"):
-                with patch("src.api.ChatGPTWorker"):
-                    with patch("src.api.ClaudeWorker"):
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.GeminiWorker"):
+                with patch("pool.src.api.ChatGPTWorker"):
+                    with patch("pool.src.api.ClaudeWorker"):
                         pool = BrowserPool(sample_config)
 
                         result = await pool.authenticate("unknown")
@@ -349,14 +346,14 @@ class TestBrowserPoolAuthenticate:
     @pytest.mark.asyncio
     async def test_authenticate_calls_worker_authenticate(self, sample_config):
         """authenticate() delegates to worker."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.GeminiWorker") as mock_worker_cls:
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.GeminiWorker") as mock_worker_cls:
                 mock_worker = MagicMock()
                 mock_worker.authenticate = AsyncMock(return_value=True)
                 mock_worker_cls.return_value = mock_worker
 
-                with patch("src.api.ChatGPTWorker"):
-                    with patch("src.api.ClaudeWorker"):
+                with patch("pool.src.api.ChatGPTWorker"):
+                    with patch("pool.src.api.ClaudeWorker"):
                         pool = BrowserPool(sample_config)
 
                         result = await pool.authenticate("gemini")
@@ -371,20 +368,20 @@ class TestBrowserPoolLifecycle:
     @pytest.mark.asyncio
     async def test_startup_starts_workers(self, sample_config):
         """startup() starts all workers."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.GeminiWorker") as mock_gemini:
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.GeminiWorker") as mock_gemini:
                 mock_worker_gemini = MagicMock()
                 mock_worker_gemini.connect = AsyncMock()
                 mock_worker_gemini.start = AsyncMock()
                 mock_gemini.return_value = mock_worker_gemini
 
-                with patch("src.api.ChatGPTWorker") as mock_chatgpt:
+                with patch("pool.src.api.ChatGPTWorker") as mock_chatgpt:
                     mock_worker_chatgpt = MagicMock()
                     mock_worker_chatgpt.connect = AsyncMock()
                     mock_worker_chatgpt.start = AsyncMock()
                     mock_chatgpt.return_value = mock_worker_chatgpt
 
-                    with patch("src.api.ClaudeWorker") as mock_claude:
+                    with patch("pool.src.api.ClaudeWorker") as mock_claude:
                         mock_worker_claude = MagicMock()
                         mock_worker_claude.connect = AsyncMock()
                         mock_worker_claude.start = AsyncMock()
@@ -403,15 +400,15 @@ class TestBrowserPoolLifecycle:
     @pytest.mark.asyncio
     async def test_startup_handles_connection_failure(self, sample_config):
         """startup() handles connection failures gracefully."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.GeminiWorker") as mock_gemini:
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.GeminiWorker") as mock_gemini:
                 mock_worker = MagicMock()
                 mock_worker.connect = AsyncMock(side_effect=Exception("Connection failed"))
                 mock_worker.start = AsyncMock()
                 mock_gemini.return_value = mock_worker
 
-                with patch("src.api.ChatGPTWorker"):
-                    with patch("src.api.ClaudeWorker"):
+                with patch("pool.src.api.ChatGPTWorker"):
+                    with patch("pool.src.api.ClaudeWorker"):
                         pool = BrowserPool(sample_config)
 
                         # Should not raise
@@ -423,20 +420,20 @@ class TestBrowserPoolLifecycle:
     @pytest.mark.asyncio
     async def test_shutdown_stops_workers(self, sample_config):
         """shutdown() stops all workers."""
-        with patch("src.api.StateManager"):
-            with patch("src.api.GeminiWorker") as mock_gemini:
+        with patch("pool.src.api.StateManager"):
+            with patch("pool.src.api.GeminiWorker") as mock_gemini:
                 mock_worker_gemini = MagicMock()
                 mock_worker_gemini.stop = AsyncMock()
                 mock_worker_gemini.disconnect = AsyncMock()
                 mock_gemini.return_value = mock_worker_gemini
 
-                with patch("src.api.ChatGPTWorker") as mock_chatgpt:
+                with patch("pool.src.api.ChatGPTWorker") as mock_chatgpt:
                     mock_worker_chatgpt = MagicMock()
                     mock_worker_chatgpt.stop = AsyncMock()
                     mock_worker_chatgpt.disconnect = AsyncMock()
                     mock_chatgpt.return_value = mock_worker_chatgpt
 
-                    with patch("src.api.ClaudeWorker") as mock_claude:
+                    with patch("pool.src.api.ClaudeWorker") as mock_claude:
                         mock_worker_claude = MagicMock()
                         mock_worker_claude.stop = AsyncMock()
                         mock_worker_claude.disconnect = AsyncMock()
@@ -454,7 +451,7 @@ class TestCreateApp:
 
     def test_creates_fastapi_app(self, sample_config):
         """create_app() creates a FastAPI application."""
-        with patch("src.api.BrowserPool"):
+        with patch("pool.src.api.BrowserPool"):
             from fastapi import FastAPI
 
             app = create_app(sample_config)
@@ -465,7 +462,7 @@ class TestCreateApp:
 
     def test_app_has_endpoints(self, sample_config):
         """App has all required endpoints."""
-        with patch("src.api.BrowserPool"):
+        with patch("pool.src.api.BrowserPool"):
             app = create_app(sample_config)
 
             routes = [route.path for route in app.routes]

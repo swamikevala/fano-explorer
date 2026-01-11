@@ -24,11 +24,6 @@ if sys.platform == "win32":
 
     sys.unraisablehook = _quiet_unraisablehook
 
-# Add paths for imports
-POOL_ROOT = Path(__file__).resolve().parent
-FANO_ROOT = POOL_ROOT.parent
-sys.path.insert(0, str(FANO_ROOT))
-
 # Now import and run
 from pool.src.api import create_app, load_config
 import uvicorn

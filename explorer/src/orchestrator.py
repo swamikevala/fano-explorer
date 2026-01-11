@@ -22,33 +22,31 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Import from LLM library (new unified interface)
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # Add parent to find llm module
+# Import from LLM library
 from llm import LLMClient, GeminiAdapter, ChatGPTAdapter, PoolUnavailableError
 
 # Keep browser imports for backwards compatibility and rate tracking
-from browser import GeminiQuotaExhausted
-from browser import (
+from explorer.src.browser import GeminiQuotaExhausted
+from explorer.src.browser import (
     rate_tracker,
     deep_mode_tracker,
     select_model,
     should_use_deep_mode,
     get_deep_mode_status,
 )
-from models import (
+from explorer.src.models import (
     ExplorationThread, ThreadStatus, ExchangeRole,
     Chunk, ChunkStatus, ChunkFeedback,
     AxiomStore, BlessedInsight,
 )
-from storage.db import Database
-from chunking import (
+from explorer.src.storage.db import Database
+from explorer.src.chunking import (
     AtomicExtractor, AtomicInsight, InsightStatus,
     get_dedup_checker, DeduplicationChecker,
     PanelExtractor, get_panel_extractor,
 )
-from review_panel import AutomatedReviewer
-from augmentation import get_augmenter, Augmenter
+from explorer.src.review_panel import AutomatedReviewer
+from explorer.src.augmentation import get_augmenter, Augmenter
 
 # Setup logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(

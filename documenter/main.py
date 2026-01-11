@@ -4,7 +4,6 @@ Documenter main module - entry point and main loop.
 
 import asyncio
 import re
-import sys
 import uuid
 from datetime import datetime, time
 from pathlib import Path
@@ -12,14 +11,12 @@ from typing import Optional
 
 import yaml
 
-# Add parent paths for imports
-FANO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(FANO_ROOT))
-
 from shared.logging import get_logger, correlation_context
-
 from llm.src.client import LLMClient
 from llm.src.consensus import ConsensusReviewer
+
+# FANO_ROOT is still needed for resolving relative paths in config
+FANO_ROOT = Path(__file__).resolve().parent.parent
 
 from .document import Document, Section
 from .concepts import ConceptTracker

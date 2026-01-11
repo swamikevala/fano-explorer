@@ -5,13 +5,8 @@ These adapters allow existing code (orchestrator, review_panel, etc.)
 to work with the new LLM library without major refactoring.
 """
 
-import sys
 from pathlib import Path
 from typing import Optional
-
-# Add shared module to path
-SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
-sys.path.insert(0, str(SHARED_PATH.parent))
 
 from shared.logging import get_logger
 

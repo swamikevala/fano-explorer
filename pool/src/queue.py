@@ -1,16 +1,11 @@
 """Request queue management for the Browser Pool Service."""
 
 import asyncio
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 from heapq import heappush, heappop
-
-# Add shared module to path
-SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
-sys.path.insert(0, str(SHARED_PATH.parent))
 
 from shared.logging import get_logger
 from .models import Priority, SendRequest

@@ -61,7 +61,7 @@ def cmd_start():
     logger.info(f"Starting Browser Pool on {host}:{port}")
 
     # Import here to avoid circular imports
-    from src.api import create_app
+    from pool.src.api import create_app
 
     app = create_app(config)
 
@@ -77,12 +77,8 @@ async def cmd_auth(backend: str):
     """Trigger authentication for a backend."""
     print(f"Authenticating with {backend}...")
 
-    # Add explorer's src to path
-    explorer_src = Path(__file__).parent.parent / "explorer" / "src"
-    sys.path.insert(0, str(explorer_src))
-
     if backend == "gemini":
-        from browser.gemini import GeminiInterface
+        from explorer.src.browser.gemini import GeminiInterface
         browser = GeminiInterface()
         await browser.connect()
         print(f"[{backend}] Browser opened. Please log in manually.")
@@ -95,7 +91,7 @@ async def cmd_auth(backend: str):
         print(f"[{backend}] Authentication complete!")
 
     elif backend == "chatgpt":
-        from browser.chatgpt import ChatGPTInterface
+        from explorer.src.browser.chatgpt import ChatGPTInterface
         browser = ChatGPTInterface()
         await browser.connect()
         print(f"[{backend}] Browser opened. Please log in manually.")

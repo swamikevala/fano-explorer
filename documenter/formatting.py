@@ -5,13 +5,8 @@ Detects LaTeX math that isn't properly delimited and fixes it using an LLM.
 """
 
 import re
-import sys
 from pathlib import Path
 from typing import Optional
-
-# Add shared module to path
-SHARED_PATH = Path(__file__).resolve().parent.parent / "shared"
-sys.path.insert(0, str(SHARED_PATH.parent))
 
 from shared.logging import get_logger
 

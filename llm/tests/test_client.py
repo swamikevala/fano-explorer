@@ -5,12 +5,8 @@ import os
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.client import LLMClient, PoolUnavailableError, BROWSER_BACKENDS, API_BACKENDS
-from src.models import LLMResponse, PoolStatus, BackendStatus
+from llm.src.client import LLMClient, PoolUnavailableError, BROWSER_BACKENDS, API_BACKENDS
+from llm.src.models import LLMResponse, PoolStatus, BackendStatus
 
 
 class TestLLMClientInit:

@@ -42,9 +42,6 @@ if sys.platform == "win32":
         except Exception:
             pass  # Some environments don't support reconfigure
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
 from rich.console import Console
 from rich.panel import Panel
 
@@ -73,7 +70,7 @@ def print_banner():
 
 def cmd_auth():
     """Authenticate with LLM providers."""
-    from browser.base import authenticate_all
+    from explorer.src.browser.base import authenticate_all
     console.print("\n[bold]Starting authentication...[/bold]\n")
     console.print("This will open Chrome windows for you to log in to:")
     console.print("  • ChatGPT (chat.openai.com)")
@@ -85,7 +82,7 @@ def cmd_auth():
 
 def cmd_start():
     """Start the exploration loop."""
-    from orchestrator import Orchestrator
+    from explorer.src.orchestrator import Orchestrator
 
     console.print("\n[bold]Starting exploration loop...[/bold]")
     console.print("Press Ctrl+C to stop gracefully.\n")
@@ -106,8 +103,8 @@ def cmd_start():
 
 def cmd_backlog():
     """Process backlog of unextracted threads."""
-    from orchestrator import Orchestrator
-    from models.thread import ExplorationThread
+    from explorer.src.orchestrator import Orchestrator
+    from explorer.src.models.thread import ExplorationThread
 
     console.print("\n[bold]Processing backlog...[/bold]")
 
@@ -167,7 +164,7 @@ def cmd_backlog():
 
 def cmd_review():
     """Start the review web interface."""
-    from ui.review_server import start_server
+    from explorer.src.ui.review_server import start_server
     console.print("\n[bold]Starting review server...[/bold]")
     console.print("Open http://localhost:8765 in your browser.\n")
     console.print("Press Ctrl+C to stop.\n")
@@ -176,9 +173,9 @@ def cmd_review():
 
 def cmd_status():
     """Show current exploration status."""
-    from storage.db import Database
-    from models.thread import ExplorationThread
-    from models.chunk import Chunk
+    from explorer.src.storage.db import Database
+    from explorer.src.models.thread import ExplorationThread
+    from explorer.src.models.chunk import Chunk
 
     data_dir = Path(__file__).parent / "data"
     db = Database(data_dir / "fano_explorer.db")
@@ -194,7 +191,7 @@ def cmd_status():
     console.print(Panel(f"[bold]Chunks Pending Review:[/bold] {len(pending)}"))
     
     # Rate limit status
-    from browser.base import get_rate_limit_status
+    from explorer.src.browser.base import get_rate_limit_status
     status = get_rate_limit_status()
     console.print(Panel("[bold]Rate Limit Status:[/bold]"))
     for model, info in status.items():
@@ -218,11 +215,11 @@ def cmd_status():
 def cmd_retry_disputed():
     """Run Round 4 (Modification Focus) for disputed insights."""
     from pathlib import Path
-    from review_panel.models import ChunkReview
-    from review_panel.round4 import run_round4
-    from review_panel.claude_api import ClaudeReviewer
-    from browser.gemini import GeminiInterface
-    from browser.chatgpt import ChatGPTInterface
+    from explorer.src.review_panel.models import ChunkReview
+    from explorer.src.review_panel.round4 import run_round4
+    from explorer.src.review_panel.claude_api import ClaudeReviewer
+    from explorer.src.browser.gemini import GeminiInterface
+    from explorer.src.browser.chatgpt import ChatGPTInterface
 
     data_dir = Path(__file__).parent / "data"
     disputed_dir = data_dir / "reviews" / "disputed"
@@ -390,7 +387,7 @@ def cmd_retry_disputed():
                 # Only move out of disputed if UNANIMOUS
                 if not review.is_disputed and review.is_unanimous:
                     # Update the insight file with final rating and modified text
-                    from chunking import AtomicInsight
+                    from explorer.src.chunking import AtomicInsight
                     chunk_json_path = chunk_path.with_suffix(".json")
                     if chunk_json_path.exists():
                         insight = AtomicInsight.load(chunk_json_path)
@@ -411,7 +408,7 @@ def cmd_retry_disputed():
                 else:
                     # Still disputed - apply modified text but keep in disputed
                     if review.final_insight_text:
-                        from chunking import AtomicInsight
+                        from explorer.src.chunking import AtomicInsight
                         chunk_json_path = chunk_path.with_suffix(".json")
                         if chunk_json_path.exists():
                             insight = AtomicInsight.load(chunk_json_path)
@@ -445,11 +442,11 @@ def cmd_retry_disputed():
 def cmd_retry_interesting():
     """Run Round 4 for insights stuck in 'interesting' status."""
     from pathlib import Path
-    from review_panel.models import ChunkReview
-    from review_panel.round4 import run_round4
-    from review_panel.claude_api import ClaudeReviewer
-    from browser.gemini import GeminiInterface
-    from browser.chatgpt import ChatGPTInterface
+    from explorer.src.review_panel.models import ChunkReview
+    from explorer.src.review_panel.round4 import run_round4
+    from explorer.src.review_panel.claude_api import ClaudeReviewer
+    from explorer.src.browser.gemini import GeminiInterface
+    from explorer.src.browser.chatgpt import ChatGPTInterface
 
     data_dir = Path(__file__).parent / "data"
     interesting_dir = data_dir / "chunks" / "insights" / "interesting"
@@ -608,7 +605,7 @@ def cmd_retry_interesting():
                 # Only bless if UNANIMOUS ⚡ - majority goes to disputed for human review
                 if review.final_rating == "⚡" and review.is_unanimous:
                     # Move chunk to blessed
-                    from chunking import AtomicInsight
+                    from explorer.src.chunking import AtomicInsight
                     insight = AtomicInsight.load(chunk_path)
                     # Apply modified text if available
                     if review.final_insight_text:
@@ -622,7 +619,7 @@ def cmd_retry_interesting():
                     console.print(f"  [green]✓ Moved to BLESSED[/green]")
                 elif review.final_rating == "✗" and review.is_unanimous:
                     # Only reject if UNANIMOUS ✗
-                    from chunking import AtomicInsight
+                    from explorer.src.chunking import AtomicInsight
                     insight = AtomicInsight.load(chunk_path)
                     # Apply modified text if available
                     if review.final_insight_text:
@@ -636,7 +633,7 @@ def cmd_retry_interesting():
                 else:
                     # Disputed or non-unanimous - apply modified text but stay in interesting
                     if review.final_insight_text:
-                        from chunking import AtomicInsight
+                        from explorer.src.chunking import AtomicInsight
                         insight = AtomicInsight.load(chunk_path)
                         insight.insight = review.final_insight_text
                         insight.save(data_dir / "chunks")
