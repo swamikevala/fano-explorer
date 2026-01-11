@@ -1,0 +1,142 @@
+{
+  "document_path": "document/main_full.md",
+  "audit_time": "2026-01-11T13:18:42.777367",
+  "updated_time": "2026-01-11T13:25:00.000000",
+  "summary": {
+    "total_sections": 43,
+    "total_words": 4032,
+    "duplicate_pairs": 5,
+    "unresolved_comments": 0,
+    "formatting_issues": 8
+  },
+  "duplicates": [
+    {
+      "section1_id": "section_1",
+      "section2_id": "section_2_1",
+      "section1_title": "1. The Primordial Triangle (line 89)",
+      "section2_title": "2.1 The Primordial Triangle (line 157)",
+      "similarity_reason": "Both describe the fundamental triangle with vertices A, B, C using F_2 coordinates (1,0,0), (0,1,0), (0,0,1)",
+      "recommendation": "merge",
+      "additional_duplicate": "Also duplicated at 3.1 The Vertices (line 231)"
+    },
+    {
+      "section1_id": "section_2",
+      "section2_id": "section_2_2",
+      "section1_title": "2. Generating Existence via Interaction (line 100)",
+      "section2_title": "2.2 Completing the Plane: Midpoints and Center (line 162)",
+      "similarity_reason": "Both derive midpoints D, E, F and center G/O using XOR arithmetic",
+      "recommendation": "merge"
+    },
+    {
+      "section1_id": "section_3",
+      "section2_id": "section_2_3",
+      "section1_title": "3. The Emergence of Lines (line 113)",
+      "section2_title": "2.3 The Arithmetic of Symmetry (line 167)",
+      "similarity_reason": "Both explain the seven lines of the Fano plane using XOR closure rule",
+      "recommendation": "merge"
+    },
+    {
+      "section1_id": "section_4",
+      "section2_id": "section_4_dup",
+      "section1_title": "4. The Structure of Relationship (line 258)",
+      "section2_title": "4. The Architecture of Witness (line 303)",
+      "similarity_reason": "SAME SECTION NUMBER - both cover incidences (21) and anti-incidences (28), with second version adding triangle anti-incidences (112)",
+      "recommendation": "merge_and_renumber"
+    },
+    {
+      "section1_id": "section_4_1",
+      "section2_id": "section_4_1_dup",
+      "section1_title": "4.1 Symmetry Breaking (line 271)",
+      "section2_title": "4.1 The Incidence Structure (line 305)",
+      "similarity_reason": "SAME SUBSECTION NUMBER - different content but numbering conflict",
+      "recommendation": "renumber"
+    }
+  ],
+  "comments": [],
+  "issues": [
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 1.",
+      "location": "line 89",
+      "details": {}
+    },
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 2.",
+      "location": "line 155",
+      "details": {}
+    },
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 3.",
+      "location": "line 216",
+      "details": {}
+    },
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 4.",
+      "location": "line 258",
+      "details": {}
+    },
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 4.",
+      "location": "line 303",
+      "details": {}
+    },
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 4.1",
+      "location": "line 305",
+      "details": {}
+    },
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 4.2",
+      "location": "line 312",
+      "details": {}
+    },
+    {
+      "type": "section_numbering",
+      "severity": "warning",
+      "message": "Duplicate section number: 5.",
+      "location": "line 329",
+      "details": {}
+    }
+  ],
+  "recommended_actions": [
+    {
+      "priority": 1,
+      "action": "Consolidate three versions of 'Primordial Triangle' into single canonical section",
+      "affected_lines": "89-99, 155-165, 231-240"
+    },
+    {
+      "priority": 2,
+      "action": "Merge 'Generating Existence' with 'Completing the Plane'",
+      "affected_lines": "100-111, 162-165"
+    },
+    {
+      "priority": 3,
+      "action": "Merge 'Emergence of Lines' with 'Arithmetic of Symmetry'",
+      "affected_lines": "113-118, 167-175"
+    },
+    {
+      "priority": 4,
+      "action": "Resolve duplicate Section 4 - merge content, renumber",
+      "affected_lines": "258-301, 303-327"
+    },
+    {
+      "priority": 5,
+      "action": "Renumber all sections sequentially after consolidation",
+      "affected_lines": "entire document"
+    }
+  ],
+  "analysis_notes": "LLM-based semantic comparison unavailable (ANTHROPIC_API_KEY empty). Analysis performed via structural and manual content review. The document appears to contain multiple drafts/versions that were concatenated rather than merged."
+}
