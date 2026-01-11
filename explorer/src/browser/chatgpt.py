@@ -420,7 +420,11 @@ class ChatGPTInterface(BaseLLMInterface):
                 # Try pressing Enter as fallback
                 print(f"[chatgpt] No send button found, pressing Enter...")
                 await self.page.keyboard.press("Enter")
-            
+
+            # Wait briefly for URL to update with conversation ID
+            await asyncio.sleep(1)
+            self.current_chat_url = self.page.url  # Capture URL after send
+
             # Wait for response
             response = await self._wait_for_response()
 

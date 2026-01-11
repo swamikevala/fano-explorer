@@ -633,6 +633,10 @@ class GeminiInterface(BaseLLMInterface):
                 print(f"[gemini] No send button found, pressing Enter...")
                 await self.page.keyboard.press("Enter")
 
+            # Wait briefly for URL to update with conversation ID
+            await asyncio.sleep(1)
+            self.current_chat_url = self.page.url  # Capture URL after send
+
             # CRITICAL: Set guard to prevent any concurrent operations during response wait
             self._response_in_progress = True
             logger.info(f"[gemini] Response guard ON - waiting for response...")
