@@ -69,8 +69,9 @@ with open(CONFIG_PATH, encoding="utf-8") as f:
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates"
+STATIC_DIR = Path(__file__).parent.parent.parent / "static"
 
-app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
+app = Flask(__name__, template_folder=str(TEMPLATE_DIR), static_folder=str(STATIC_DIR))
 
 
 # Register markdown filter for templates

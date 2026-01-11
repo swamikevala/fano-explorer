@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p ~/screenshots*)",
+      "Bash(powershell.exe*)",
+      "Read(//c/Users/swami.kevala/screenshots/*)",
+      "Read(~/screenshots/*)"
+    ]
+  }
+}
