@@ -11,7 +11,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 import yaml
 
 from dotenv import load_dotenv
@@ -255,6 +255,16 @@ class BaseLLMInterface:
         self.playwright = None
         self.config = CONFIG["models"].get(self.model_name, {})
         self.chat_logger = ChatLogger(self.model_name)
+        self._url_update_callback: Optional[Callable[[str], None]] = None
+
+    def set_url_update_callback(self, callback: Optional[Callable[[str], None]]):
+        """Set callback to be called when chat URL changes."""
+        self._url_update_callback = callback
+
+    def _notify_url_change(self, url: str):
+        """Notify that the chat URL has changed."""
+        if self._url_update_callback:
+            self._url_update_callback(url)
     
     async def connect(self):
         """Establish browser connection."""

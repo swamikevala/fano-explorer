@@ -456,6 +456,20 @@ class GeminiWorker(BaseWorker):
             # Capture chat URL before sending message
             chat_url = self.browser.page.url
 
+            # Set up URL update callback - browser will call this when URL changes
+            def on_url_change(new_url: str):
+                log.info("pool.worker.url_changed", backend=self.backend_name, new_url=new_url)
+                self.state.set_active_work(
+                    backend=self.backend_name,
+                    request_id=request_id,
+                    prompt=request.prompt,
+                    chat_url=new_url,
+                    thread_id=getattr(request, 'thread_id', None),
+                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
+                )
+
+            self.browser.set_url_update_callback(on_url_change)
+
             # Record active work so we can recover if pool restarts
             self.state.set_active_work(
                 backend=self.backend_name,
@@ -468,17 +482,8 @@ class GeminiWorker(BaseWorker):
 
             response_text = await self.browser.send_message(request.prompt)
 
-            # Update chat URL after sending (browser captures URL after clicking send)
-            final_chat_url = getattr(self.browser, 'current_chat_url', None) or self.browser.page.url
-            if final_chat_url and final_chat_url != chat_url:
-                self.state.set_active_work(
-                    backend=self.backend_name,
-                    request_id=request_id,
-                    prompt=request.prompt,
-                    chat_url=final_chat_url,
-                    thread_id=getattr(request, 'thread_id', None),
-                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
-                )
+            # Clear callback
+            self.browser.set_url_update_callback(None)
 
             self._check_and_mark_rate_limit(response_text)
 
@@ -497,17 +502,9 @@ class GeminiWorker(BaseWorker):
             )
 
         except Exception as e:
-            # Update with latest URL before returning error (for recovery)
-            final_chat_url = getattr(self.browser, 'current_chat_url', None)
-            if final_chat_url and final_chat_url != chat_url:
-                self.state.set_active_work(
-                    backend=self.backend_name,
-                    request_id=request_id,
-                    prompt=request.prompt,
-                    chat_url=final_chat_url,
-                    thread_id=getattr(request, 'thread_id', None),
-                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
-                )
+            # Clear callback on error too
+            if self.browser:
+                self.browser.set_url_update_callback(None)
             log.exception(e, "pool.request.processing_error", {"backend": self.backend_name})
             # Don't clear active work on error - we might be able to recover
             return SendResponse(
@@ -620,6 +617,20 @@ class ChatGPTWorker(BaseWorker):
             # Capture chat URL before sending message
             chat_url = self.browser.page.url
 
+            # Set up URL update callback - browser will call this when URL changes
+            def on_url_change(new_url: str):
+                log.info("pool.worker.url_changed", backend=self.backend_name, new_url=new_url)
+                self.state.set_active_work(
+                    backend=self.backend_name,
+                    request_id=request_id,
+                    prompt=request.prompt,
+                    chat_url=new_url,
+                    thread_id=getattr(request, 'thread_id', None),
+                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
+                )
+
+            self.browser.set_url_update_callback(on_url_change)
+
             # Record active work so we can recover if pool restarts
             self.state.set_active_work(
                 backend=self.backend_name,
@@ -632,17 +643,8 @@ class ChatGPTWorker(BaseWorker):
 
             response_text = await self.browser.send_message(request.prompt)
 
-            # Update chat URL after sending (browser captures URL after clicking send)
-            final_chat_url = getattr(self.browser, 'current_chat_url', None) or self.browser.page.url
-            if final_chat_url and final_chat_url != chat_url:
-                self.state.set_active_work(
-                    backend=self.backend_name,
-                    request_id=request_id,
-                    prompt=request.prompt,
-                    chat_url=final_chat_url,
-                    thread_id=getattr(request, 'thread_id', None),
-                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
-                )
+            # Clear callback
+            self.browser.set_url_update_callback(None)
 
             self._check_and_mark_rate_limit(response_text)
 
@@ -661,17 +663,9 @@ class ChatGPTWorker(BaseWorker):
             )
 
         except Exception as e:
-            # Update with latest URL before returning error (for recovery)
-            final_chat_url = getattr(self.browser, 'current_chat_url', None)
-            if final_chat_url and final_chat_url != chat_url:
-                self.state.set_active_work(
-                    backend=self.backend_name,
-                    request_id=request_id,
-                    prompt=request.prompt,
-                    chat_url=final_chat_url,
-                    thread_id=getattr(request, 'thread_id', None),
-                    options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
-                )
+            # Clear callback on error too
+            if self.browser:
+                self.browser.set_url_update_callback(None)
             log.exception(e, "pool.request.processing_error", {"backend": self.backend_name})
             # Don't clear active work on error - we might be able to recover
             return SendResponse(

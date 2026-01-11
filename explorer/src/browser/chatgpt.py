@@ -421,11 +421,11 @@ class ChatGPTInterface(BaseLLMInterface):
                 print(f"[chatgpt] No send button found, pressing Enter...")
                 await self.page.keyboard.press("Enter")
 
+            # Start URL monitoring in background - will notify callback when URL changes
+            asyncio.create_task(self._monitor_and_notify_url())
+
             # Wait for response
             response = await self._wait_for_response()
-
-            # Capture final URL (now has conversation ID)
-            self.current_chat_url = self.page.url
 
             # Check for rate limiting
             if self._check_rate_limit(response):
@@ -457,7 +457,6 @@ class ChatGPTInterface(BaseLLMInterface):
         start_time = datetime.now()
         last_response = ""
         stable_count = 0
-        url_captured = False
 
         # Selectors for assistant messages
         response_selectors = [
@@ -467,12 +466,6 @@ class ChatGPTInterface(BaseLLMInterface):
         ]
 
         while (datetime.now() - start_time).seconds < timeout:
-            # Capture URL early once it has conversation ID
-            if not url_captured:
-                current_url = self.page.url
-                if "/c/" in current_url:  # ChatGPT conversation URLs contain /c/
-                    self.current_chat_url = current_url
-                    url_captured = True
             for selector in response_selectors:
                 messages = await self.page.query_selector_all(selector)
                 
@@ -582,6 +575,24 @@ class ChatGPTInterface(BaseLLMInterface):
             // Dispatch input event to notify any listeners
             el.dispatchEvent(new Event('input', { bubbles: true }));
         }""", text)
+
+    async def _monitor_and_notify_url(self):
+        """Monitor URL and notify when it changes to include conversation ID."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        for _ in range(60):  # Check for 60 seconds
+            try:
+                current_url = self.page.url
+                # ChatGPT conversation URLs contain /c/
+                if "/c/" in current_url:
+                    logger.info(f"[chatgpt] URL changed to conversation URL: {current_url}")
+                    self._notify_url_change(current_url)
+                    return
+            except Exception as e:
+                logger.debug(f"[chatgpt] URL monitor error: {e}")
+            await asyncio.sleep(1)
+        logger.warning("[chatgpt] URL monitor: never saw URL change to conversation URL")
 
     async def is_generating(self) -> bool:
         """Check if ChatGPT is currently generating a response."""

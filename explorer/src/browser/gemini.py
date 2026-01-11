@@ -633,6 +633,9 @@ class GeminiInterface(BaseLLMInterface):
                 print(f"[gemini] No send button found, pressing Enter...")
                 await self.page.keyboard.press("Enter")
 
+            # Start URL monitoring in background - will notify callback when URL changes
+            asyncio.create_task(self._monitor_and_notify_url())
+
             # CRITICAL: Set guard to prevent any concurrent operations during response wait
             self._response_in_progress = True
             logger.info(f"[gemini] Response guard ON - waiting for response...")
@@ -649,9 +652,6 @@ class GeminiInterface(BaseLLMInterface):
             if self._check_rate_limit(response):
                 rate_tracker.mark_limited(self.model_name)
                 raise RateLimitError("Gemini rate limit detected")
-
-            # Capture final URL (now has conversation ID)
-            self.current_chat_url = self.page.url
 
             # Log the exchange locally
             self.chat_logger.log_exchange(message, response)
@@ -719,9 +719,6 @@ class GeminiInterface(BaseLLMInterface):
 
         logger.info(f"[gemini] Initial wait: {initial_wait}s before stability checks")
         await asyncio.sleep(initial_wait)
-
-        # Capture URL early (should have conversation ID by now)
-        self.current_chat_url = self.page.url
 
         while (datetime.now() - start_time).seconds < timeout:
             elapsed = (datetime.now() - start_time).seconds
@@ -889,6 +886,22 @@ class GeminiInterface(BaseLLMInterface):
             // Dispatch input event to notify any listeners
             el.dispatchEvent(new Event('input', { bubbles: true }));
         }""", text)
+
+    async def _monitor_and_notify_url(self):
+        """Monitor URL and notify when it changes to include conversation ID."""
+        base_url = "https://gemini.google.com/app"
+        for _ in range(60):  # Check for 60 seconds
+            try:
+                current_url = self.page.url
+                # Gemini conversation URLs have /app/ followed by a UUID
+                if current_url != base_url and current_url.startswith(base_url) and len(current_url) > len(base_url) + 1:
+                    logger.info(f"[gemini] URL changed to conversation URL: {current_url}")
+                    self._notify_url_change(current_url)
+                    return
+            except Exception as e:
+                logger.debug(f"[gemini] URL monitor error: {e}")
+            await asyncio.sleep(1)
+        logger.warning("[gemini] URL monitor: never saw URL change to conversation URL")
 
     async def is_generating(self) -> bool:
         """Check if Gemini is currently generating a response."""
