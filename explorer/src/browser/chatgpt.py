@@ -172,14 +172,18 @@ class ChatGPTInterface(BaseLLMInterface):
             print(f"[chatgpt] Could not enable Pro mode: {e}")
             return False
 
-    async def enable_thinking_mode(self) -> bool:
+    async def enable_thinking_mode(self, effort: str = "standard") -> bool:
         """
-        Enable standard (non-Pro) mode - GPT-4o or similar.
-        This is the preferred mode for standard queries (not Pro).
+        Enable thinking mode with specified effort level.
+
+        Args:
+            effort: Thinking effort level - "light", "standard", "extended", or "heavy"
+                    Default is "standard" which is good for most tasks.
+
         Returns True if successfully enabled.
         """
         try:
-            print(f"[chatgpt] Switching to standard (non-Pro) mode...")
+            print(f"[chatgpt] Switching to thinking mode (effort: {effort})...")
 
             # Find the model switcher button
             model_btn = await self.page.query_selector(
@@ -193,81 +197,61 @@ class ChatGPTInterface(BaseLLMInterface):
                     text = await model_btn.inner_text()
                     text_lower = text.lower()
 
-                    # Already on a non-Pro mode?
-                    if "pro" not in text_lower and ("4o" in text_lower or "gpt" in text_lower):
-                        print(f"[chatgpt] Already on standard mode: {text}")
-                        self.thinking_mode_enabled = True
-                        self._current_mode = "thinking"
-                        return True
+                    # Need to open dropdown if not already on thinking mode
+                    need_model_switch = "pro" in text_lower or ("4o" not in text_lower and "thinking" not in text_lower and "5.2" not in text_lower)
 
-                    # Click to open dropdown
-                    print(f"[chatgpt] Opening model selector (current: {text})...")
-                    await model_btn.click()
-                    await asyncio.sleep(0.5)
+                    if need_model_switch:
+                        # Click to open dropdown
+                        print(f"[chatgpt] Opening model selector (current: {text})...")
+                        await model_btn.click()
+                        await asyncio.sleep(0.5)
 
-                    # Get all menu items and log them for debugging
-                    menu_items = await self.page.query_selector_all("[role='menuitem'], [role='option'], [data-testid*='model']")
-                    print(f"[chatgpt] Found {len(menu_items)} menu items")
+                        # Get all menu items
+                        menu_items = await self.page.query_selector_all("[role='menuitem'], [role='option'], [data-testid*='model']")
 
-                    # Log all visible options for debugging
-                    visible_options = []
-                    for item in menu_items:
-                        try:
-                            if await item.is_visible():
+                        # Look for Thinking mode first (5.2), then other standard options
+                        standard_patterns = ["5.2", "thinking", "4o", "gpt-4"]
+
+                        model_selected = False
+                        for item in menu_items:
+                            try:
+                                item_visible = await item.is_visible()
+                                if not item_visible:
+                                    continue
                                 item_text = await item.inner_text()
-                                visible_options.append(item_text[:50])
-                        except:
-                            pass
-                    print(f"[chatgpt] Available options: {visible_options}")
+                                item_lower = item_text.lower()
 
-                    # Look for Thinking mode first (5.2), then other standard options
-                    standard_patterns = ["5.2", "thinking", "4o", "gpt-4"]
+                                # Skip Pro mode
+                                if "pro" in item_lower:
+                                    continue
 
-                    for item in menu_items:
-                        try:
-                            item_visible = await item.is_visible()
-                            if not item_visible:
+                                # Look for preferred model
+                                for pattern in standard_patterns:
+                                    if pattern in item_lower:
+                                        print(f"[chatgpt] Selecting model: {item_text[:40]}")
+                                        await item.click()
+                                        await asyncio.sleep(1)
+                                        model_selected = True
+                                        break
+                                if model_selected:
+                                    break
+                            except Exception as e:
                                 continue
-                            item_text = await item.inner_text()
-                            item_lower = item_text.lower()
 
-                            # Skip Pro mode
-                            if "pro" in item_lower:
-                                continue
+                        if not model_selected:
+                            # Close dropdown if we couldn't find a model
+                            await self.page.keyboard.press("Escape")
+                            print(f"[chatgpt] No suitable model found")
+                            return False
+                    else:
+                        print(f"[chatgpt] Already on suitable mode: {text}")
 
-                            # Look for preferred model (5.2 Thinking first)
-                            for pattern in standard_patterns:
-                                if pattern in item_lower:
-                                    print(f"[chatgpt] Selecting: {item_text[:40]}")
-                                    await item.click()
-                                    await asyncio.sleep(1)
-                                    self.thinking_mode_enabled = True
-                                    self._current_mode = "thinking"
-                                    return True
-                        except Exception as e:
-                            print(f"[chatgpt] Error checking menu item: {e}")
-                            continue
+                    # Now set the thinking effort level
+                    await self._set_thinking_effort(effort)
 
-                    # If no standard pattern found, just pick first non-Pro option
-                    for item in menu_items:
-                        try:
-                            item_visible = await item.is_visible()
-                            if not item_visible:
-                                continue
-                            item_text = await item.inner_text()
-                            if "pro" not in item_text.lower():
-                                print(f"[chatgpt] Selecting first non-Pro: {item_text[:40]}")
-                                await item.click()
-                                await asyncio.sleep(1)
-                                self.thinking_mode_enabled = True
-                                self._current_mode = "thinking"
-                                return True
-                        except Exception:
-                            continue
-
-                    # Close dropdown
-                    await self.page.keyboard.press("Escape")
-                    print(f"[chatgpt] No suitable option found in dropdown")
+                    self.thinking_mode_enabled = True
+                    self._current_mode = "thinking"
+                    return True
 
             # If we can't find the selector, continue without error
             print(f"[chatgpt] Model selector not found, using default mode")
@@ -276,6 +260,69 @@ class ChatGPTInterface(BaseLLMInterface):
         except Exception as e:
             print(f"[chatgpt] Could not switch mode: {e}")
             return False
+
+    async def _set_thinking_effort(self, effort: str = "standard"):
+        """
+        Set the thinking effort level (light/standard/extended/heavy).
+
+        This looks for a thinking effort selector in the UI and sets it.
+        """
+        try:
+            # Look for thinking effort selector/slider
+            # ChatGPT may have this as a dropdown, slider, or button group
+            effort_selectors = [
+                "[data-testid*='thinking-effort']",
+                "[data-testid*='effort']",
+                "[aria-label*='thinking']",
+                "button:has-text('Light'), button:has-text('Standard'), button:has-text('Extended')",
+            ]
+
+            for selector in effort_selectors:
+                try:
+                    effort_control = await self.page.query_selector(selector)
+                    if effort_control and await effort_control.is_visible():
+                        # Found effort control, click to open if needed
+                        await effort_control.click()
+                        await asyncio.sleep(0.3)
+                        break
+                except:
+                    continue
+
+            # Look for the specific effort level option
+            effort_options = await self.page.query_selector_all(
+                f"[role='menuitem'], [role='option'], button"
+            )
+
+            for option in effort_options:
+                try:
+                    if not await option.is_visible():
+                        continue
+                    option_text = await option.inner_text()
+                    if effort.lower() in option_text.lower():
+                        print(f"[chatgpt] Setting thinking effort: {option_text[:30]}")
+                        await option.click()
+                        await asyncio.sleep(0.3)
+                        return
+                except:
+                    continue
+
+            # Try looking for a slider or segmented control
+            # Some UIs use aria-label or data attributes
+            standard_btn = await self.page.query_selector(
+                f"button[aria-label*='{effort}' i], "
+                f"[data-value='{effort}'], "
+                f"label:has-text('{effort}')"
+            )
+            if standard_btn and await standard_btn.is_visible():
+                print(f"[chatgpt] Clicking effort button: {effort}")
+                await standard_btn.click()
+                await asyncio.sleep(0.3)
+                return
+
+            print(f"[chatgpt] Could not find thinking effort control (may not be available)")
+
+        except Exception as e:
+            print(f"[chatgpt] Could not set thinking effort: {e}")
 
     async def send_message(self, message: str, use_pro_mode: bool = False, use_thinking_mode: bool = False) -> str:
         """

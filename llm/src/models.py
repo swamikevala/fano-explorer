@@ -199,3 +199,49 @@ class ConsensusResult:
             "mind_changes": self.mind_changes,
             "review_duration_seconds": self.review_duration_seconds,
         }
+
+
+@dataclass
+class ConsensusRunResult:
+    """Result of a general-purpose consensus task."""
+    success: bool
+    outcome: str  # The synthesized answer/decision/content
+    converged: bool  # Did all LLMs agree?
+    confidence: float  # 0.0-1.0 based on agreement strength
+
+    # Full transcript of all rounds
+    rounds: list[dict] = field(default_factory=list)
+
+    # Minority view if not converged
+    dissent: Optional[str] = None
+
+    # Selection stats (when select_best=True was used)
+    selection_stats: Optional[dict] = None
+
+    # Timing
+    duration_seconds: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "success": self.success,
+            "outcome": self.outcome,
+            "converged": self.converged,
+            "confidence": self.confidence,
+            "rounds": self.rounds,
+            "dissent": self.dissent,
+            "selection_stats": self.selection_stats,
+            "duration_seconds": self.duration_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ConsensusRunResult":
+        return cls(
+            success=data["success"],
+            outcome=data["outcome"],
+            converged=data["converged"],
+            confidence=data["confidence"],
+            rounds=data.get("rounds", []),
+            dissent=data.get("dissent"),
+            selection_stats=data.get("selection_stats"),
+            duration_seconds=data.get("duration_seconds", 0.0),
+        )

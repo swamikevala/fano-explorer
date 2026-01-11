@@ -308,6 +308,10 @@ class ChatGPTWorker(BaseWorker):
 
             if request.options.deep_mode:
                 deep_mode_used = await self._try_enable_deep_mode()
+            else:
+                # Explicitly ensure we're NOT in Pro mode
+                # (browser may remember Pro mode from previous session)
+                await self.browser.enable_thinking_mode()
 
             response_text = await self.browser.send_message(request.prompt)
             self._check_and_mark_rate_limit(response_text)

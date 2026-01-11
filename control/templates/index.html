@@ -1,0 +1,2623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fano Control Panel</title>
+    <!-- MathJax for LaTeX rendering -->
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+            }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --bg-tertiary: #334155;
+            --accent: #0f3460;
+            --highlight: #e94560;
+            --text: #f1f5f9;
+            --text-dim: #64748b;
+            --text-secondary: #94a3b8;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #f87171;
+            --blessed: #fbbf24;
+            --interesting: #60a5fa;
+            --disputed: #fb923c;
+            --nav-height: 60px;
+            --border: #475569;
+            --border-light: #334155;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* Navigation Bar */
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: var(--nav-height);
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-light);
+            display: flex;
+            align-items: center;
+            padding: 0 2rem;
+            z-index: 1000;
+        }
+
+        .nav-brand {
+            font-size: 1.5rem;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-right: 2rem;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .nav-tab {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 1rem;
+            border-radius: 8px 8px 0 0;
+            transition: all 0.2s;
+        }
+
+        .nav-tab:hover {
+            color: var(--text);
+            background: var(--accent);
+        }
+
+        .nav-tab.active {
+            color: var(--text);
+            background: var(--accent);
+            border-bottom: 2px solid var(--highlight);
+        }
+
+        .nav-status {
+            margin-left: auto;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .nav-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .nav-indicator .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-dim);
+        }
+
+        .nav-indicator .dot.running {
+            background: var(--success);
+        }
+
+        /* Main Content */
+        .main-content {
+            padding-top: var(--nav-height);
+            min-height: 100vh;
+        }
+
+        .page {
+            display: none;
+            padding: 2rem;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Cards */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border-light);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-running { background: var(--success); color: #000; }
+        .status-stopped { background: var(--text-dim); color: #fff; }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-danger { background: var(--error); color: white; }
+        .btn-secondary { background: var(--accent); color: var(--text); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+        .btn-bless { background: linear-gradient(135deg, var(--blessed), #f59e0b); color: #000; }
+        .btn-interesting { background: linear-gradient(135deg, var(--interesting), #3b82f6); color: #fff; }
+        .btn-reject { background: transparent; border: 2px solid var(--error); color: var(--error); }
+        .btn-reject:hover { background: var(--error); color: #fff; }
+
+        /* Backends Grid */
+        .backends-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .backend-item {
+            background: var(--accent);
+            padding: 0.75rem;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-dot.available { background: var(--success); }
+        .status-dot.unavailable { background: var(--text-dim); }
+
+        /* Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 1rem;
+            background: var(--accent);
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--highlight);
+        }
+
+        .stat-label {
+            color: var(--text-dim);
+            font-size: 0.875rem;
+        }
+
+        .section-title {
+            font-size: 1rem;
+            color: var(--text-dim);
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .explorer-modes {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 0.75rem;
+            text-align: center;
+        }
+
+        /* Logs */
+        .logs-container {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 1rem;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.8rem;
+            margin-top: 1rem;
+        }
+
+        .log-entry {
+            padding: 0.25rem 0;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .log-time { color: var(--text-dim); }
+        .log-level-INFO { color: var(--success); }
+        .log-level-WARNING { color: var(--warning); }
+        .log-level-ERROR { color: var(--error); }
+
+        /* Document Page */
+        .document-container {
+            background: #fff;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 3rem;
+            border-radius: 12px;
+            line-height: 1.8;
+            font-family: Georgia, 'Times New Roman', serif;
+        }
+
+        .document-container h1 { color: #1a1a2e; border-bottom: 2px solid #8b5cf6; padding-bottom: 10px; }
+        .document-container h2 { color: #333; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 2rem; }
+        .document-container code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+
+        .document-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-light);
+            position: sticky;
+            top: 0;
+            background: var(--bg-secondary);
+            z-index: 100;
+            margin: -1.5rem -1.5rem 1rem -1.5rem;
+        }
+
+        .document-stats { color: var(--text-dim); font-size: 0.9rem; }
+
+        /* Full Logs Page */
+        .logs-page-container {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            gap: 1.5rem;
+            height: calc(100vh - var(--nav-height) - 4rem);
+        }
+
+        .logs-sidebar {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1rem;
+            border: 1px solid var(--border-light);
+        }
+
+        .logs-sidebar .btn {
+            width: 100%;
+            margin-bottom: 0.5rem;
+            text-align: left;
+        }
+
+        .logs-sidebar .btn.active { background: var(--highlight); }
+
+        .logs-main {
+            background: #0d1117;
+            border-radius: 12px;
+            padding: 1rem;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.85rem;
+        }
+
+        .logs-filter input {
+            width: 100%;
+            padding: 0.5rem;
+            background: var(--accent);
+            border: 1px solid var(--bg-card);
+            border-radius: 6px;
+            color: var(--text);
+        }
+
+        /* Explorer Page */
+        .explorer-nav {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .explorer-nav-btn {
+            padding: 0.5rem 1rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .explorer-nav-btn:hover {
+            background: var(--accent);
+            color: var(--text);
+        }
+
+        .explorer-nav-btn.active {
+            background: var(--accent);
+            color: var(--text);
+            border-color: var(--highlight);
+        }
+
+        .explorer-nav-btn .count {
+            background: var(--bg-dark);
+            padding: 0.1rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+        }
+
+        .explorer-nav-btn.blessed { color: var(--blessed); }
+        .explorer-nav-btn.interesting { color: var(--interesting); }
+        .explorer-nav-btn.rejected { color: var(--error); }
+        .explorer-nav-btn.disputed { color: var(--disputed); }
+
+        /* Insight Card */
+        .insight-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            overflow: hidden;
+        }
+
+        .insight-card.disputed { border-left: 4px solid var(--disputed); }
+        .insight-card.modified { border-left: 4px solid var(--success); }
+
+        .insight-header {
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-card) 100%);
+            cursor: pointer;
+        }
+
+        .insight-header:hover {
+            background: linear-gradient(180deg, var(--accent) 0%, var(--bg-card) 100%);
+        }
+
+        .insight-rating {
+            font-size: 1.75rem;
+            line-height: 1;
+        }
+
+        .insight-meta { flex: 1; }
+
+        .insight-id {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+        }
+
+        .insight-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .tag {
+            background: var(--bg-tertiary);
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-light);
+        }
+
+        .tag.confidence-high { background: rgba(74, 222, 128, 0.1); color: var(--success); border-color: var(--success); }
+        .tag.confidence-medium { background: rgba(251, 191, 36, 0.1); color: var(--warning); border-color: var(--warning); }
+        .tag.confidence-low { background: rgba(248, 113, 113, 0.1); color: var(--error); border-color: var(--error); }
+        .tag.disputed { background: rgba(251, 146, 60, 0.1); color: var(--disputed); border-color: var(--disputed); }
+        .tag.modified { background: rgba(74, 222, 128, 0.1); color: var(--success); border-color: var(--success); }
+
+        .insight-preview {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .insight-toggle {
+            color: var(--text-dim);
+            transition: transform 0.2s;
+            font-size: 1rem;
+            padding: 0.5rem;
+        }
+
+        .insight-card.collapsed .insight-toggle { transform: rotate(-90deg); }
+        .insight-card.collapsed .insight-body { display: none; }
+        .insight-card:not(.collapsed) .insight-preview { display: none; }
+
+        .insight-content {
+            padding: 1.5rem;
+            background: var(--bg-dark);
+            border-top: 1px solid var(--border-light);
+            border-bottom: 1px solid var(--border-light);
+            line-height: 1.8;
+        }
+
+        .insight-content blockquote {
+            border-left: 3px solid var(--interesting);
+            padding-left: 1rem;
+            margin: 0;
+            color: var(--text);
+        }
+
+        .modified-insight {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid var(--success);
+            border-radius: 8px;
+        }
+
+        .modified-insight-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--success);
+            margin-bottom: 0.5rem;
+        }
+
+        /* Review Section */
+        .review-section {
+            border-top: 1px solid var(--border-light);
+        }
+
+        .review-section-header {
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            cursor: pointer;
+            background: var(--bg-card);
+        }
+
+        .review-section-header:hover { background: var(--bg-tertiary); }
+
+        .review-section.collapsed .review-section-content { display: none; }
+
+        .review-section-content {
+            padding: 1rem 1.5rem;
+            background: var(--bg-dark);
+        }
+
+        .review-round {
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .review-round:last-child { border-bottom: none; }
+
+        .round-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .round-number {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .round-outcome {
+            margin-left: auto;
+            font-size: 0.75rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+        }
+
+        .round-outcome.unanimous { background: rgba(74, 222, 128, 0.1); color: var(--success); }
+        .round-outcome.split { background: rgba(251, 191, 36, 0.1); color: var(--warning); }
+
+        .reviewer-response {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+        }
+
+        .reviewer-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .reviewer-name {
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+
+        .reviewer-rating { font-size: 1.1rem; }
+
+        .reviewer-content {
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        /* Insight Actions */
+        .insight-actions {
+            padding: 1rem 1.5rem;
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            background: var(--bg-card);
+        }
+
+        .notes-input {
+            flex: 1;
+            padding: 0.5rem 1rem;
+            background: var(--bg-dark);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.85rem;
+        }
+
+        .notes-input:focus {
+            outline: none;
+            border-color: var(--interesting);
+        }
+
+        /* Priority Controls */
+        .priority-control {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .priority-btn {
+            width: 24px;
+            height: 24px;
+            border: 1px solid var(--border-light);
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .priority-btn:hover { border-color: var(--interesting); color: var(--interesting); }
+        .priority-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .priority-value {
+            min-width: 24px;
+            text-align: center;
+            font-family: monospace;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .priority-value.high { color: var(--blessed); }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            padding: 1rem 1.5rem;
+            border-radius: 10px;
+            font-weight: 600;
+            z-index: 1000;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .loading { animation: pulse 1.5s infinite; }
+
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr; }
+            .logs-page-container { grid-template-columns: 1fr; }
+            .navbar { padding: 0 1rem; }
+            .nav-status { display: none; }
+        }
+
+        /* Annotation Styles */
+
+        /* Annotation anchor - small visual marker inserted in document */
+        .annotation-anchor {
+            display: inline-block;
+            width: 4px;
+            height: 1em;
+            vertical-align: text-bottom;
+            border-radius: 2px;
+            margin: 0 2px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .annotation-anchor.annotation-comment {
+            background: #ffc107;
+        }
+
+        .annotation-anchor.annotation-protected {
+            background: #28a745;
+        }
+
+        .annotation-anchor:hover,
+        .annotation-anchor.highlight {
+            transform: scaleX(2);
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .annotation-anchor.annotation-comment:hover,
+        .annotation-anchor.annotation-comment.highlight {
+            box-shadow: 0 0 8px #ffc107;
+        }
+
+        .annotation-anchor.annotation-protected:hover,
+        .annotation-anchor.annotation-protected.highlight {
+            box-shadow: 0 0 8px #28a745;
+        }
+
+        /* Legacy highlight styles (for backwards compatibility) */
+        .annotation-comment:not(.annotation-anchor) {
+            background: #fff3cd;
+            border-bottom: 2px solid #ffc107;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .annotation-comment:not(.annotation-anchor):hover {
+            background: #ffe69c;
+        }
+
+        .annotation-protected:not(.annotation-anchor) {
+            background: #d4edda;
+            border-bottom: 2px solid #28a745;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .annotation-protected:not(.annotation-anchor):hover {
+            background: #c3e6cb;
+        }
+
+        /* Action Menu - appears on text selection */
+        .annotation-action-menu {
+            position: absolute;
+            display: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .annotation-action-menu button {
+            padding: 0.5rem 1rem;
+            border: none;
+            background: var(--bg-tertiary);
+            color: var(--text);
+            cursor: pointer;
+            border-radius: 4px;
+            margin-right: 0.5rem;
+            transition: background 0.2s;
+        }
+
+        .annotation-action-menu button:hover {
+            background: var(--accent);
+        }
+
+        .annotation-action-menu button:last-child {
+            margin-right: 0;
+        }
+
+        .annotation-action-menu .btn-comment {
+            background: #fff3cd;
+            color: #333;
+        }
+
+        .annotation-action-menu .btn-protect {
+            background: #d4edda;
+            color: #333;
+        }
+
+        /* Comment Popup Modal */
+        .comment-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            z-index: 1001;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            display: none;
+        }
+
+        .comment-popup h3 {
+            margin: 0 0 1rem 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .comment-popup .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 1.5rem;
+        }
+
+        .comment-popup .selected-text {
+            background: #fff3cd;
+            color: #333;
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .comment-popup textarea {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            resize: vertical;
+            min-height: 100px;
+            font-family: inherit;
+        }
+
+        .comment-popup .btn-group {
+            margin-top: 1rem;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+        }
+
+        /* Overlay for modals */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: none;
+        }
+
+        /* Document with margin annotations layout */
+        .document-with-margins {
+            display: flex;
+            gap: 1rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            align-items: flex-start;
+        }
+
+        .document-main {
+            flex: 1;
+            max-width: 900px;
+            min-width: 0;
+        }
+
+        .annotation-margin {
+            width: 280px;
+            flex-shrink: 0;
+            position: sticky;
+            top: calc(var(--nav-height) + 1rem);
+            max-height: calc(100vh - var(--nav-height) - 2rem);
+            overflow-y: auto;
+        }
+
+        .annotation-margin.hidden {
+            display: none;
+        }
+
+        .annotation-margin.hidden ~ .document-main {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        /* Margin annotation note */
+        .margin-note {
+            position: relative;
+            width: 100%;
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-size: 0.85rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 0.75rem;
+        }
+
+        .margin-note.comment {
+            border-left: 3px solid #ffc107;
+        }
+
+        .margin-note.protected {
+            border-left: 3px solid #28a745;
+        }
+
+        .margin-note:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transform: translateX(-2px);
+        }
+
+        .margin-note.active {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            z-index: 10;
+        }
+
+        .margin-note .note-type {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 0.25rem;
+        }
+
+        .margin-note.comment .note-type {
+            color: #ffc107;
+        }
+
+        .margin-note.protected .note-type {
+            color: #28a745;
+        }
+
+        .margin-note .note-text {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin-bottom: 0.5rem;
+            font-style: italic;
+        }
+
+        .margin-note .note-content {
+            color: var(--text);
+            line-height: 1.4;
+        }
+
+        .margin-note .note-actions {
+            margin-top: 0.5rem;
+            text-align: right;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .margin-note:hover .note-actions {
+            opacity: 1;
+        }
+
+        .margin-note .btn-delete {
+            padding: 0.2rem 0.5rem;
+            font-size: 0.7rem;
+            background: transparent;
+            border: 1px solid var(--error);
+            color: var(--error);
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .margin-note .btn-delete:hover {
+            background: var(--error);
+            color: white;
+        }
+
+        .margin-note.not-found {
+            opacity: 0.6;
+            border-left-style: dashed;
+        }
+
+        .margin-note.not-found .note-type {
+            color: var(--text-dim);
+        }
+
+        /* Highlight when hovering margin note */
+        .annotation-comment.highlight,
+        .annotation-protected.highlight {
+            outline: 2px solid;
+            outline-offset: 2px;
+        }
+
+        .annotation-comment.highlight {
+            outline-color: #ffc107;
+        }
+
+        .annotation-protected.highlight {
+            outline-color: #28a745;
+        }
+
+        /* Fallback list for when margins hidden */
+        .annotation-list-panel {
+            display: none;
+            margin-bottom: 1rem;
+        }
+
+        .annotation-list-panel h3 {
+            margin: 0 0 1rem 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Tooltip for annotations */
+        .annotation-tooltip {
+            position: absolute;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.85rem;
+            max-width: 300px;
+            z-index: 999;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="nav-brand">FANO</div>
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="showPage('dashboard')">Dashboard</button>
+            <button class="nav-tab" onclick="showPage('explorer')">Explorer</button>
+            <button class="nav-tab" onclick="showPage('document')">Document</button>
+            <button class="nav-tab" onclick="showPage('logs')">Logs</button>
+        </div>
+        <div class="nav-status">
+            <div class="nav-indicator">
+                <span class="dot" id="nav-pool-dot"></span>
+                <span>Pool</span>
+            </div>
+            <div class="nav-indicator">
+                <span class="dot" id="nav-explorer-dot"></span>
+                <span>Explorer</span>
+            </div>
+            <div class="nav-indicator">
+                <span class="dot" id="nav-documenter-dot"></span>
+                <span>Documenter</span>
+            </div>
+            <button class="btn btn-secondary" onclick="restartServer(this)" style="margin-left: 1rem; padding: 0.25rem 0.75rem; font-size: 0.85rem;">Restart Server</button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Dashboard Page -->
+        <div id="page-dashboard" class="page active">
+            <div class="container">
+                <div class="grid">
+                    <!-- Pool Service -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Pool Service</span>
+                            <span id="pool-status" class="status-badge status-stopped">Stopped</span>
+                        </div>
+                        <p style="color: var(--text-dim); margin-bottom: 1rem;">
+                            Manages browser connections to Gemini and ChatGPT
+                        </p>
+                        <div class="btn-group">
+                            <button id="pool-start" class="btn btn-primary" onclick="startComponent('pool')">Start Pool</button>
+                            <button id="pool-stop" class="btn btn-danger" onclick="stopComponent('pool')" disabled>Stop</button>
+                        </div>
+
+                        <div class="section-title">Backends</div>
+                        <div class="backends-grid" id="backends-grid"></div>
+                    </div>
+
+                    <!-- Explorer -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Explorer</span>
+                            <span id="explorer-status" class="status-badge status-stopped">Stopped</span>
+                        </div>
+                        <p style="color: var(--text-dim); margin-bottom: 1rem;">
+                            Autonomous exploration of mathematical connections
+                        </p>
+                        <div class="btn-group">
+                            <button id="explorer-start" class="btn btn-primary" onclick="startExplorer('start')">Start Exploration</button>
+                            <button id="explorer-stop" class="btn btn-danger" onclick="stopComponent('explorer')" disabled>Stop</button>
+                        </div>
+
+                        <div class="explorer-modes">
+                            <button class="btn btn-secondary mode-btn" onclick="startExplorer('backlog')">Process Backlog</button>
+                            <button class="btn btn-secondary mode-btn" onclick="showPage('explorer')">Review Insights</button>
+                        </div>
+
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-value" id="explorer-threads">0</div>
+                                <div class="stat-label">Active Threads</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="explorer-blessed">0</div>
+                                <div class="stat-label">Blessed Insights</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Documenter -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Documenter</span>
+                            <span id="documenter-status" class="status-badge status-stopped">Stopped</span>
+                        </div>
+                        <p style="color: var(--text-dim); margin-bottom: 1rem;">
+                            Growing the living mathematical document
+                        </p>
+                        <div class="btn-group">
+                            <button id="documenter-start" class="btn btn-primary" onclick="startComponent('documenter')">Start Documenter</button>
+                            <button id="documenter-stop" class="btn btn-danger" onclick="stopComponent('documenter')" disabled>Stop</button>
+                            <button class="btn btn-secondary" onclick="showPage('document')">View Document</button>
+                        </div>
+
+                        <div class="section-title">Current Activity</div>
+                        <div id="documenter-activity" style="background: var(--accent); padding: 0.75rem; border-radius: 8px; font-size: 0.9rem;">
+                            <span style="color: var(--text-dim);">Idle</span>
+                        </div>
+
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-value" id="documenter-sections">0</div>
+                                <div class="stat-label">Sections</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="documenter-calls">0</div>
+                                <div class="stat-label">Consensus Calls</div>
+                            </div>
+                        </div>
+
+                        <div class="section-title">Recent Events</div>
+                        <div id="documenter-events" style="background: var(--accent); padding: 0.75rem; border-radius: 8px; font-size: 0.85rem; max-height: 150px; overflow-y: auto;">
+                            <span style="color: var(--text-dim);">No recent events</span>
+                        </div>
+                    </div>
+
+                    <!-- Quick Logs -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Recent Logs</span>
+                            <div class="btn-group">
+                                <button class="btn btn-secondary" onclick="loadQuickLogs('pool')">Pool</button>
+                                <button class="btn btn-secondary" onclick="loadQuickLogs('explorer')">Explorer</button>
+                                <button class="btn btn-secondary" onclick="loadQuickLogs('documenter')">Documenter</button>
+                            </div>
+                        </div>
+                        <div class="logs-container" id="quick-logs-container">
+                            <div class="log-entry" style="color: var(--text-dim);">Select a log source above...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Explorer Page -->
+        <div id="page-explorer" class="page">
+            <div class="container" style="max-width: 1100px;">
+                <div class="explorer-nav">
+                    <button class="explorer-nav-btn" data-status="reviewing" onclick="loadExplorerInsights('reviewing')">
+                        In Review <span class="count" id="exp-stat-reviewing">0</span>
+                    </button>
+                    <button class="explorer-nav-btn active" data-status="pending" onclick="loadExplorerInsights('pending')">
+                        Pending <span class="count" id="exp-stat-pending">0</span>
+                    </button>
+                    <button class="explorer-nav-btn disputed" data-status="disputed" onclick="loadExplorerInsights('disputed')">
+                        Disputed <span class="count" id="exp-stat-disputed">0</span>
+                    </button>
+                    <button class="explorer-nav-btn blessed" data-status="blessed" onclick="loadExplorerInsights('blessed')">
+                        Blessed <span class="count" id="exp-stat-blessed">0</span>
+                    </button>
+                    <button class="explorer-nav-btn interesting" data-status="interesting" onclick="loadExplorerInsights('interesting')">
+                        Interesting <span class="count" id="exp-stat-interesting">0</span>
+                    </button>
+                    <button class="explorer-nav-btn rejected" data-status="rejected" onclick="loadExplorerInsights('rejected')">
+                        Rejected <span class="count" id="exp-stat-rejected">0</span>
+                    </button>
+                    <div style="margin-left: auto;">
+                        <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
+                        <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                    </div>
+                </div>
+
+                <div id="explorer-insights">
+                    <div class="empty-state">
+                        <div class="icon">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Document Page -->
+        <div id="page-document" class="page">
+            <div class="container">
+                <div class="card" style="margin-bottom: 1rem;">
+                    <div class="document-header">
+                        <div>
+                            <h2 style="margin: 0;">Mathematical Document</h2>
+                            <div class="document-stats" id="document-stats">Loading...</div>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-secondary" onclick="loadDocument()">Refresh</button>
+                            <button class="btn btn-secondary" id="toggle-annotations-btn" onclick="toggleAnnotationMargin()">Hide Annotations</button>
+                            <button class="btn btn-secondary" onclick="toggleVersionHistory()">History</button>
+                            <button class="btn btn-secondary" onclick="fixFormatting(this)" title="Fix math delimiter issues">Fix Formatting</button>
+                            <button class="btn btn-primary" onclick="downloadDocument()">Download</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Version History Panel -->
+                <div id="version-history-panel" class="card" style="margin-bottom: 1rem; display: none;">
+                    <h3 style="margin-top: 0;">Version History</h3>
+                    <div id="version-list" style="max-height: 300px; overflow-y: auto;">
+                        <p style="color: var(--text-dim);">Loading versions...</p>
+                    </div>
+                </div>
+
+                <!-- Document with margin annotations -->
+                <div class="document-with-margins">
+                    <div class="document-main">
+                        <div class="document-container" id="document-content" style="position: relative;">
+                            <p style="color: #888; text-align: center;">Loading document...</p>
+                        </div>
+                    </div>
+                    <div class="annotation-margin" id="annotation-margin">
+                        <!-- Margin notes will be positioned here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Page -->
+        <div id="page-logs" class="page">
+            <div class="container">
+                <div class="logs-page-container">
+                    <div class="logs-sidebar">
+                        <h3 style="margin-bottom: 1rem; font-size: 1rem;">Log Sources</h3>
+                        <button class="btn btn-secondary active" id="logs-btn-pool" onclick="loadFullLogs('pool')">Pool</button>
+                        <button class="btn btn-secondary" id="logs-btn-explorer" onclick="loadFullLogs('explorer')">Explorer</button>
+                        <button class="btn btn-secondary" id="logs-btn-documenter" onclick="loadFullLogs('documenter')">Documenter</button>
+                        <button class="btn btn-secondary" id="logs-btn-llm" onclick="loadFullLogs('llm')">LLM</button>
+
+                        <div class="logs-filter" style="margin-top: 1.5rem;">
+                            <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">Filter</h3>
+                            <input type="text" id="logs-filter-input" placeholder="Search logs..." oninput="filterLogs()">
+                        </div>
+
+                        <div style="margin-top: 1.5rem;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-dim); font-size: 0.9rem;">
+                                <input type="checkbox" id="logs-auto-scroll" checked>
+                                Auto-scroll
+                            </label>
+                        </div>
+                    </div>
+                    <div class="logs-main" id="full-logs-container">
+                        <div class="log-entry" style="color: var(--text-dim);">Select a log source...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Annotation Action Menu -->
+    <div id="annotation-action-menu" class="annotation-action-menu">
+        <button class="btn-comment" onclick="showCommentPopup()">Comment</button>
+        <button class="btn-protect" onclick="addProtectedRegion()">Protect</button>
+    </div>
+
+    <!-- Comment Popup -->
+    <div id="modal-overlay" class="modal-overlay" onclick="hideCommentPopup()"></div>
+    <div id="comment-popup" class="comment-popup">
+        <h3>
+            <span>Add Comment</span>
+            <button class="close-btn" onclick="hideCommentPopup()">&times;</button>
+        </h3>
+        <div class="selected-text" id="comment-selected-text"></div>
+        <textarea id="comment-content" placeholder="Enter your comment..."></textarea>
+        <div class="btn-group">
+            <button class="btn btn-secondary" onclick="hideCommentPopup()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitComment()">Add Comment</button>
+        </div>
+    </div>
+
+    <!-- Annotation Tooltip -->
+    <div id="annotation-tooltip" class="annotation-tooltip"></div>
+
+    <script>
+        // Current state
+        let currentPage = 'dashboard';
+        let currentLogsSource = 'pool';
+        let currentExplorerStatus = 'pending';
+        let allLogs = [];
+        let explorerStats = {};
+
+        // Page navigation
+        function showPage(pageName) {
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+                if (tab.textContent.toLowerCase().includes(pageName)) {
+                    tab.classList.add('active');
+                }
+            });
+
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+            document.getElementById(`page-${pageName}`).classList.add('active');
+
+            currentPage = pageName;
+
+            if (pageName === 'document') {
+                loadDocument();
+            } else if (pageName === 'logs') {
+                loadFullLogs(currentLogsSource);
+            } else if (pageName === 'explorer') {
+                loadExplorerStats();
+                loadExplorerInsights(currentExplorerStatus);
+            }
+        }
+
+        // Refresh intervals
+        setInterval(refreshStatus, 10000);
+        setInterval(refreshDocumenterActivity, 5000);
+        setInterval(() => {
+            if (currentPage === 'logs') loadFullLogs(currentLogsSource, true);
+            if (currentPage === 'explorer') loadExplorerStats();
+        }, 5000);
+
+        // Initial load
+        refreshStatus();
+        refreshDocumenterActivity();
+
+        async function refreshStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                updateUI(data);
+            } catch (e) {
+                console.error('Failed to refresh status:', e);
+            }
+        }
+
+        async function refreshDocumenterActivity() {
+            try {
+                const resp = await fetch('/api/documenter/activity');
+                const data = await resp.json();
+                updateDocumenterActivity(data);
+            } catch (e) {
+                console.error('Failed to refresh documenter activity:', e);
+            }
+        }
+
+        function updateDocumenterActivity(data) {
+            const activityEl = document.getElementById('documenter-activity');
+            const eventsEl = document.getElementById('documenter-events');
+
+            if (!data.is_running) {
+                activityEl.innerHTML = '<span style="color: var(--text-dim);">Not running</span>';
+            } else if (data.current_task) {
+                let taskText = '';
+                if (data.current_task.type === 'processing_insight') {
+                    const insightId = data.current_task.insight_id || 'unknown';
+                    taskText = `<span style="color: var(--success);">Processing:</span> <a href="#" onclick="viewInsight('${insightId}'); return false;" style="color: var(--primary); text-decoration: underline; cursor: pointer;">${insightId}</a>`;
+                } else if (data.current_task.type === 'consensus') {
+                    taskText = `<span style="color: var(--warning);">Running consensus...</span>`;
+                } else {
+                    taskText = data.current_task.type;
+                }
+                activityEl.innerHTML = taskText;
+            } else {
+                activityEl.innerHTML = '<span style="color: var(--text-dim);">Idle</span>';
+            }
+
+            if (data.recent_events && data.recent_events.length > 0) {
+                let eventsHtml = '';
+                for (const event of data.recent_events.slice(0, 5)) {
+                    const eventName = event.event.split('.').pop();
+                    const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
+                    eventsHtml += `<div style="padding: 2px 0; border-bottom: 1px solid var(--bg-card);">
+                        <span style="color: var(--text-dim);">${time}</span> ${eventName}
+                    </div>`;
+                }
+                eventsEl.innerHTML = eventsHtml;
+            }
+        }
+
+        function updateUI(data) {
+            updateComponentStatus('pool', data.pool.running, data.pool.external);
+            document.getElementById('nav-pool-dot').className = 'dot' + (data.pool.running ? ' running' : '');
+
+            updateComponentStatus('explorer', data.explorer.running);
+            document.getElementById('nav-explorer-dot').className = 'dot' + (data.explorer.running ? ' running' : '');
+
+            updateComponentStatus('documenter', data.documenter.running);
+            document.getElementById('nav-documenter-dot').className = 'dot' + (data.documenter.running ? ' running' : '');
+
+            // Backends
+            const backendsGrid = document.getElementById('backends-grid');
+            backendsGrid.innerHTML = '';
+            for (const [name, info] of Object.entries(data.backends)) {
+                if (info.enabled) {
+                    let statusText = info.available ? 'ready' : (info.authenticated === false ? 'needs auth' : info.type);
+                    backendsGrid.innerHTML += `
+                        <div class="backend-item">
+                            <span>${name}</span>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="color: var(--text-dim); font-size: 0.8rem;">${statusText}</span>
+                                <span class="status-dot ${info.available ? 'available' : 'unavailable'}"></span>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            document.getElementById('explorer-blessed').textContent = data.stats.explorer.blessed;
+            document.getElementById('documenter-sections').textContent = data.stats.documenter.sections;
+            document.getElementById('documenter-calls').textContent = data.stats.documenter.consensus_calls;
+        }
+
+        function updateComponentStatus(component, running, external = false) {
+            const statusEl = document.getElementById(`${component}-status`);
+            const startBtn = document.getElementById(`${component}-start`);
+            const stopBtn = document.getElementById(`${component}-stop`);
+
+            if (running) {
+                statusEl.textContent = external ? 'Running (external)' : 'Running';
+                statusEl.className = 'status-badge status-running';
+                startBtn.disabled = true;
+                stopBtn.disabled = external;
+            } else {
+                statusEl.textContent = 'Stopped';
+                statusEl.className = 'status-badge status-stopped';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        async function startComponent(component) {
+            try {
+                const resp = await fetch(`/api/start/${component}`, { method: 'POST' });
+                const data = await resp.json();
+                if (data.error) alert(`Error: ${data.error}`);
+                refreshStatus();
+            } catch (e) {
+                alert(`Failed to start ${component}: ${e}`);
+            }
+        }
+
+        async function startExplorer(mode) {
+            try {
+                const resp = await fetch('/api/start/explorer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: mode })
+                });
+                const data = await resp.json();
+                if (data.error) alert(`Error: ${data.error}`);
+                refreshStatus();
+            } catch (e) {
+                alert(`Failed to start explorer: ${e}`);
+            }
+        }
+
+        async function stopComponent(component) {
+            try {
+                const resp = await fetch(`/api/stop/${component}`, { method: 'POST' });
+                const data = await resp.json();
+                if (data.error) alert(`Error: ${data.error}`);
+                refreshStatus();
+            } catch (e) {
+                alert(`Failed to stop ${component}: ${e}`);
+            }
+        }
+
+        async function restartServer(btn) {
+            const originalText = btn.textContent;
+            btn.textContent = 'Restarting...';
+            btn.disabled = true;
+
+            try {
+                await fetch('/api/server/restart', { method: 'POST' });
+
+                // Poll until server is back
+                let attempts = 0;
+                const maxAttempts = 30;  // 30 seconds max
+
+                const pollServer = async () => {
+                    attempts++;
+                    try {
+                        const resp = await fetch('/health');
+                        if (resp.ok) {
+                            // Server is back, refresh page
+                            location.reload();
+                            return;
+                        }
+                    } catch (e) {
+                        // Server still down, keep trying
+                    }
+
+                    if (attempts < maxAttempts) {
+                        setTimeout(pollServer, 1000);
+                    } else {
+                        alert('Server restart timed out. Please refresh manually.');
+                        btn.textContent = originalText;
+                        btn.disabled = false;
+                    }
+                };
+
+                // Wait a bit for server to start shutting down, then poll
+                setTimeout(pollServer, 1000);
+
+            } catch (e) {
+                // Expected - connection will drop when server restarts
+                setTimeout(() => {
+                    // Start polling for server to come back
+                    let attempts = 0;
+                    const pollServer = async () => {
+                        attempts++;
+                        try {
+                            const resp = await fetch('/health');
+                            if (resp.ok) {
+                                location.reload();
+                                return;
+                            }
+                        } catch (e) {}
+
+                        if (attempts < 30) {
+                            setTimeout(pollServer, 1000);
+                        } else {
+                            alert('Server restart timed out. Please refresh manually.');
+                            btn.textContent = originalText;
+                            btn.disabled = false;
+                        }
+                    };
+                    pollServer();
+                }, 1000);
+            }
+        }
+
+        // ==================== Explorer ====================
+
+        async function loadExplorerStats() {
+            try {
+                const resp = await fetch('/api/explorer/stats');
+                explorerStats = await resp.json();
+                document.getElementById('exp-stat-reviewing').textContent = explorerStats.reviewing || 0;
+                document.getElementById('exp-stat-pending').textContent = explorerStats.pending || 0;
+                document.getElementById('exp-stat-disputed').textContent = explorerStats.disputed || 0;
+                document.getElementById('exp-stat-blessed').textContent = explorerStats.blessed || 0;
+                document.getElementById('exp-stat-interesting').textContent = explorerStats.interesting || 0;
+                document.getElementById('exp-stat-rejected').textContent = explorerStats.rejected || 0;
+            } catch (e) {
+                console.error('Failed to load explorer stats:', e);
+            }
+        }
+
+        async function viewInsight(insightId) {
+            // Switch to explorer page
+            showPage('explorer');
+
+            const container = document.getElementById('explorer-insights');
+            container.innerHTML = '<div class="empty-state"><div class="icon loading">Loading insight...</div></div>';
+
+            try {
+                // Fetch the specific insight
+                const resp = await fetch(`/api/explorer/insight/${insightId}`);
+                const data = await resp.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="empty-state">
+                        <div class="icon">🔍</div>
+                        <h2>Insight not found</h2>
+                        <p>Could not find insight: ${insightId}</p>
+                    </div>`;
+                    return;
+                }
+
+                // Render the insight - combine insight and review data
+                const item = {
+                    ...data.insight,
+                    review: data.review,
+                    status: data.status
+                };
+                const status = data.status || 'pending';
+
+                container.innerHTML = `<div style="margin-bottom: 1rem; padding: 0.5rem; background: var(--bg-card); border-radius: 4px;">
+                    <span style="color: var(--text-dim);">Viewing single insight:</span> ${insightId}
+                    <a href="#" onclick="loadExplorerInsights('${status}'); return false;" style="margin-left: 1rem; color: var(--primary);">← Back to ${status}</a>
+                </div>` + renderInsightCard(item, status);
+
+                // Trigger MathJax
+                if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                }
+            } catch (e) {
+                container.innerHTML = `<div class="empty-state"><div class="icon">Error</div><p>Failed to load insight: ${e}</p></div>`;
+            }
+        }
+
+        async function loadExplorerInsights(status) {
+            currentExplorerStatus = status;
+
+            // Update nav buttons
+            document.querySelectorAll('.explorer-nav-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.status === status) btn.classList.add('active');
+            });
+
+            const container = document.getElementById('explorer-insights');
+            container.innerHTML = '<div class="empty-state"><div class="icon loading">Loading...</div></div>';
+
+            try {
+                const resp = await fetch(`/api/explorer/insights/${status}`);
+                const data = await resp.json();
+
+                if (data.insights.length === 0) {
+                    container.innerHTML = `<div class="empty-state">
+                        <div class="icon">${getStatusIcon(status)}</div>
+                        <h2>No insights in this category</h2>
+                        <p>${getStatusMessage(status)}</p>
+                    </div>`;
+                    return;
+                }
+
+                container.innerHTML = data.insights.map(item => renderInsightCard(item, status)).join('');
+
+                // Trigger MathJax
+                if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                }
+            } catch (e) {
+                container.innerHTML = `<div class="empty-state"><div class="icon">Error</div><p>${e}</p></div>`;
+            }
+        }
+
+        function getStatusIcon(status) {
+            const icons = { pending: '✨', reviewing: '🔄', disputed: '⚖️', blessed: '⚡', interesting: '?', rejected: '🗑️' };
+            return icons[status] || '📋';
+        }
+
+        function getStatusMessage(status) {
+            const msgs = {
+                pending: 'The exploration is running. Check back soon for new insights.',
+                reviewing: 'No insights are currently being reviewed.',
+                disputed: 'No disputed insights! All reviews have reached consensus.',
+                blessed: 'No blessed insights yet.',
+                interesting: 'No interesting insights yet.',
+                rejected: 'No rejected insights.'
+            };
+            return msgs[status] || '';
+        }
+
+        function renderInsightCard(item, currentStatus) {
+            const insight = item.insight;
+            const review = item.review;
+            const id = insight.id || insight.chunk_id || 'unknown';
+            const rating = insight.rating || '○';
+            const confidence = insight.confidence || 'medium';
+            const tags = insight.tags || [];
+            const text = insight.insight || insight.text || '';
+            const extractedAt = insight.extracted_at ? new Date(insight.extracted_at).toLocaleString() : '';
+            const model = insight.extraction_model || '';
+            const priority = insight.priority || 5;
+            const isDisputed = insight.is_disputed;
+            const isModified = review && review.final_insight_text && review.final_insight_text !== text;
+            const roundsCount = review ? (review.rounds || []).length : 0;
+
+            let cardClass = 'insight-card collapsed';
+            if (isDisputed) cardClass += ' disputed';
+            if (isModified) cardClass += ' modified';
+
+            let tagsHtml = `<span class="tag confidence-${confidence}">${confidence}</span>`;
+            if (roundsCount > 0) tagsHtml += `<span class="tag">${roundsCount} round${roundsCount > 1 ? 's' : ''}</span>`;
+            if (isDisputed) tagsHtml += `<span class="tag disputed">DISPUTED</span>`;
+            if (isModified) tagsHtml += `<span class="tag modified">MODIFIED</span>`;
+            tags.forEach(t => tagsHtml += `<span class="tag">${t}</span>`);
+
+            let reviewHtml = '';
+            if (review && review.rounds && review.rounds.length > 0) {
+                reviewHtml = `
+                    <div class="review-section collapsed">
+                        <div class="review-section-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                            <span>🎯</span>
+                            <span style="font-weight: 600;">Review Panel</span>
+                            <span style="margin-left: auto; color: var(--text-dim);">▼</span>
+                        </div>
+                        <div class="review-section-content">
+                            ${review.rounds.map(round => renderReviewRound(round)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            let actionsHtml = '';
+            if (currentStatus === 'pending') {
+                actionsHtml = `
+                    <div class="insight-actions">
+                        <button class="btn btn-bless" onclick="submitFeedback('${id}', 'bless')">⚡ Bless</button>
+                        <button class="btn btn-interesting" onclick="submitFeedback('${id}', 'interesting')">? Interesting</button>
+                        <button class="btn btn-reject" onclick="submitFeedback('${id}', 'reject')">✗ Reject</button>
+                        <input type="text" class="notes-input" id="notes-${id}" placeholder="Optional notes...">
+                    </div>
+                `;
+            }
+
+            let priorityHtml = '';
+            if (['pending', 'interesting', 'disputed'].includes(currentStatus)) {
+                priorityHtml = `
+                    <div class="priority-control" onclick="event.stopPropagation()">
+                        <span style="font-size: 0.7rem; color: var(--text-dim);">Pri</span>
+                        <button class="priority-btn" onclick="changePriority('${id}', -1)" ${priority <= 1 ? 'disabled' : ''}>−</button>
+                        <span class="priority-value ${priority >= 8 ? 'high' : ''}" id="priority-${id}">${priority}</span>
+                        <button class="priority-btn" onclick="changePriority('${id}', 1)" ${priority >= 10 ? 'disabled' : ''}>+</button>
+                    </div>
+                `;
+            }
+
+            return `
+                <article class="${cardClass}" id="insight-${id}">
+                    <div class="insight-header" onclick="this.closest('.insight-card').classList.toggle('collapsed')">
+                        <span class="insight-rating">${rating}</span>
+                        <div class="insight-meta">
+                            <div class="insight-id">${id} · ${extractedAt} · ${model}</div>
+                            <div class="insight-tags">${tagsHtml}</div>
+                            <div class="insight-preview">${text.substring(0, 200)}${text.length > 200 ? '...' : ''}</div>
+                        </div>
+                        ${priorityHtml}
+                        <span class="insight-toggle">▼</span>
+                    </div>
+                    <div class="insight-body">
+                        <div class="insight-content">
+                            <blockquote>${text}</blockquote>
+                            ${isModified ? `
+                                <div class="modified-insight">
+                                    <div class="modified-insight-label">✨ Modified Version (accepted)</div>
+                                    <blockquote>${review.final_insight_text}</blockquote>
+                                </div>
+                            ` : ''}
+                        </div>
+                        ${reviewHtml}
+                        ${actionsHtml}
+                    </div>
+                </article>
+            `;
+        }
+
+        function renderReviewRound(round) {
+            const roundNum = round.round_number || 1;
+            const outcome = round.outcome || '';
+            const responses = round.responses || {};
+
+            let responsesHtml = '';
+            for (const [llm, resp] of Object.entries(responses)) {
+                responsesHtml += `
+                    <div class="reviewer-response">
+                        <div class="reviewer-header">
+                            <span class="reviewer-name">${llm}</span>
+                            <span class="reviewer-rating">${resp.rating || ''}</span>
+                        </div>
+                        <div class="reviewer-content">
+                            ${resp.reasoning ? `<p><strong>Reasoning:</strong> ${resp.reasoning}</p>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="review-round">
+                    <div class="round-header">
+                        <span class="round-number">${roundNum}</span>
+                        <span style="font-weight: 600;">Round ${roundNum}</span>
+                        <span class="round-outcome ${outcome}">${outcome}</span>
+                    </div>
+                    ${responsesHtml}
+                </div>
+            `;
+        }
+
+        async function submitFeedback(insightId, feedback) {
+            const notesEl = document.getElementById(`notes-${insightId}`);
+            const notes = notesEl ? notesEl.value : '';
+
+            try {
+                const resp = await fetch('/api/explorer/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ insight_id: insightId, feedback, notes })
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    const card = document.getElementById(`insight-${insightId}`);
+                    card.style.opacity = '0';
+                    card.style.transform = 'translateX(100%)';
+                    card.style.transition = 'all 0.3s';
+                    setTimeout(() => {
+                        card.remove();
+                        loadExplorerStats();
+                    }, 300);
+                    showToast(`Marked as ${feedback}`);
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Failed to submit feedback: ' + e);
+            }
+        }
+
+        async function changePriority(insightId, delta) {
+            const valueEl = document.getElementById(`priority-${insightId}`);
+            const current = parseInt(valueEl.textContent);
+            const newPriority = Math.max(1, Math.min(10, current + delta));
+
+            if (newPriority === current) return;
+
+            try {
+                const resp = await fetch('/api/explorer/priority', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ insight_id: insightId, priority: newPriority })
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    valueEl.textContent = data.priority;
+                    valueEl.className = 'priority-value' + (data.priority >= 8 ? ' high' : '');
+                }
+            } catch (e) {
+                console.error('Failed to update priority:', e);
+            }
+        }
+
+        function expandAllInsights() {
+            document.querySelectorAll('.insight-card.collapsed').forEach(c => c.classList.remove('collapsed'));
+            if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+            }
+        }
+
+        function collapseAllInsights() {
+            document.querySelectorAll('.insight-card:not(.collapsed)').forEach(c => c.classList.add('collapsed'));
+        }
+
+        // ==================== Logs ====================
+
+        async function loadQuickLogs(component) {
+            try {
+                const resp = await fetch(`/api/logs/${component}?limit=30`);
+                const data = await resp.json();
+
+                const container = document.getElementById('quick-logs-container');
+                if (data.logs.length === 0) {
+                    container.innerHTML = '<div class="log-entry" style="color: var(--text-dim);">No logs found</div>';
+                    return;
+                }
+
+                container.innerHTML = data.logs.map(log => {
+                    const time = log.timestamp ? log.timestamp.split('T')[1].split('.')[0] : '';
+                    const level = log.level || 'INFO';
+                    const event = log.event_type || '';
+                    return `<div class="log-entry">
+                        <span class="log-time">${time}</span>
+                        <span class="log-level-${level}">[${level}]</span>
+                        <span>${event}</span>
+                    </div>`;
+                }).join('');
+
+                container.scrollTop = container.scrollHeight;
+            } catch (e) {
+                console.error('Failed to load logs:', e);
+            }
+        }
+
+        async function loadFullLogs(component, silent = false) {
+            currentLogsSource = component;
+
+            document.querySelectorAll('.logs-sidebar .btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`logs-btn-${component}`).classList.add('active');
+
+            try {
+                const resp = await fetch(`/api/logs/${component}?limit=200`);
+                const data = await resp.json();
+                allLogs = data.logs;
+                renderLogs();
+            } catch (e) {
+                if (!silent) console.error('Failed to load logs:', e);
+            }
+        }
+
+        function renderLogs() {
+            const container = document.getElementById('full-logs-container');
+            const filter = document.getElementById('logs-filter-input').value.toLowerCase();
+
+            let filteredLogs = allLogs;
+            if (filter) {
+                filteredLogs = allLogs.filter(log => JSON.stringify(log).toLowerCase().includes(filter));
+            }
+
+            if (filteredLogs.length === 0) {
+                container.innerHTML = '<div class="log-entry" style="color: var(--text-dim);">No logs found</div>';
+                return;
+            }
+
+            container.innerHTML = filteredLogs.map(log => {
+                const time = log.timestamp ? log.timestamp.split('T')[1].split('.')[0] : '';
+                const level = log.level || 'INFO';
+                const event = log.event_type || '';
+                const details = Object.keys(log)
+                    .filter(k => !['timestamp', 'level', 'event_type', 'module', 'component'].includes(k))
+                    .map(k => `${k}=${JSON.stringify(log[k])}`)
+                    .join(' ');
+                return `<div class="log-entry">
+                    <span class="log-time">${time}</span>
+                    <span class="log-level-${level}">[${level}]</span>
+                    <span>${event}</span>
+                    ${details ? `<span style="color: var(--text-dim); margin-left: 1rem;">${details}</span>` : ''}
+                </div>`;
+            }).join('');
+
+            if (document.getElementById('logs-auto-scroll').checked) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        function filterLogs() { renderLogs(); }
+
+        // ==================== Document ====================
+
+        async function loadDocument() {
+            const container = document.getElementById('document-content');
+            const statsEl = document.getElementById('document-stats');
+
+            try {
+                const resp = await fetch('/api/document');
+                const data = await resp.json();
+
+                if (data.error) {
+                    container.innerHTML = `<p style="color: #888; text-align: center;">${data.error}</p>`;
+                    statsEl.textContent = 'Document not found';
+                    return;
+                }
+
+                // Convert annotation markers to anchor spans BEFORE other processing
+                // Markers look like: <!-- @ann:c001 --> or <!-- @ann:p001 -->
+                let content = data.content.replace(
+                    /<!-- @ann:(\w+) -->/g,
+                    '<span class="annotation-anchor" data-annotation-id="$1"></span>'
+                );
+
+                let html = content
+                    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/`(.*?)`/g, '<code>$1</code>')
+                    .replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>')
+                    .replace(/^\d+\. (.*$)/gm, '<li>$1</li>')
+                    .replace(/^- (.*$)/gm, '<li>$1</li>')
+                    .replace(/\n\n/g, '</p><p>')
+                    .replace(/\n/g, '<br>');
+
+                container.innerHTML = '<p>' + html + '</p>';
+                statsEl.textContent = `${data.sections} sections · ${Math.round(data.length / 1000)}k characters`;
+
+                // Load annotations and render margin notes
+                await loadAnnotationsAndRender();
+
+                if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                }
+            } catch (e) {
+                container.innerHTML = `<p style="color: #888; text-align: center;">Failed to load document: ${e}</p>`;
+            }
+        }
+
+        function downloadDocument() {
+            window.open('/document', '_blank');
+        }
+
+        // Formatting fix with polling (survives page refresh)
+        let formattingFixPolling = null;
+        let lastSectionsFixed = 0;
+
+        function stopFormattingPoll(btn) {
+            if (formattingFixPolling) {
+                clearInterval(formattingFixPolling);
+                formattingFixPolling = null;
+            }
+            btn.textContent = 'Fix Formatting';
+            btn.disabled = false;
+        }
+
+        async function fixFormatting(btn) {
+            btn.textContent = 'Fixing...';
+            btn.disabled = true;
+
+            try {
+                const resp = await fetch('/api/document/fix-formatting', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    startFormattingPoll(btn);
+                } else {
+                    alert('Error: ' + data.error);
+                    stopFormattingPoll(btn);
+                }
+            } catch (e) {
+                alert('Failed to start formatting fix: ' + e);
+                stopFormattingPoll(btn);
+            }
+        }
+
+        function startFormattingPoll(btn) {
+            if (formattingFixPolling) return;
+            lastSectionsFixed = 0;
+
+            formattingFixPolling = setInterval(async () => {
+                try {
+                    const resp = await fetch('/api/document/fix-formatting/status');
+                    const data = await resp.json();
+
+                    if (data.status === 'complete') {
+                        stopFormattingPoll(btn);
+                        if (data.success && data.issues_fixed > 0) {
+                            showToast(data.message || `Fixed formatting in ${data.issues_fixed} section(s)`);
+                            await loadDocument();
+                        } else if (data.success) {
+                            showToast('No formatting issues found');
+                        } else {
+                            alert('Error: ' + data.error);
+                        }
+                    } else if (data.status === 'idle') {
+                        stopFormattingPoll(btn);
+                    } else if (data.status === 'in_progress') {
+                        if (data.progress) {
+                            btn.textContent = `Section ${data.progress.current}/${data.progress.total}...`;
+                        }
+                        if (data.sections_fixed > lastSectionsFixed) {
+                            lastSectionsFixed = data.sections_fixed;
+                            await loadDocument();
+                        }
+                    }
+                } catch (e) {
+                    console.error('Poll error:', e);
+                }
+            }, 1000);  // Poll every second
+        }
+
+        // Check formatting status on page load
+        async function checkFormattingStatus() {
+            try {
+                const resp = await fetch('/api/document/fix-formatting/status');
+                const data = await resp.json();
+
+                if (data.status === 'in_progress') {
+                    // Operation in progress, show fixing state
+                    const btn = document.querySelector('button[onclick*="fixFormatting"]');
+                    if (btn) {
+                        if (data.progress) {
+                            btn.textContent = `Section ${data.progress.current}/${data.progress.total}...`;
+                        } else {
+                            btn.textContent = 'Fixing...';
+                        }
+                        btn.disabled = true;
+                        startFormattingPoll(btn);
+                    }
+                } else if (data.status === 'complete') {
+                    // Completed while we were away
+                    if (data.success && data.issues_fixed > 0) {
+                        showToast(`Fixed ${data.issues_fixed} formatting issue(s)`);
+                        await loadDocument();
+                    } else if (!data.success) {
+                        alert('Formatting fix error: ' + data.error);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to check formatting status:', e);
+            }
+        }
+
+        // Version History Functions
+        let versionHistoryVisible = false;
+
+        async function toggleVersionHistory() {
+            const panel = document.getElementById('version-history-panel');
+            versionHistoryVisible = !versionHistoryVisible;
+
+            if (versionHistoryVisible) {
+                panel.style.display = 'block';
+                await loadVersionHistory();
+            } else {
+                panel.style.display = 'none';
+            }
+        }
+
+        async function loadVersionHistory() {
+            const container = document.getElementById('version-list');
+
+            try {
+                const resp = await fetch('/api/document/versions');
+                const data = await resp.json();
+
+                if (data.error) {
+                    container.innerHTML = `<p style="color: var(--text-dim);">Error: ${data.error}</p>`;
+                    return;
+                }
+
+                if (!data.versions || data.versions.length === 0) {
+                    container.innerHTML = '<p style="color: var(--text-dim);">No version history yet. Versions are created when the document is saved.</p>';
+                    return;
+                }
+
+                let html = '<table style="width: 100%; border-collapse: collapse;">';
+                html += '<thead><tr style="border-bottom: 1px solid var(--border);">';
+                html += '<th style="text-align: left; padding: 0.5rem;">Time</th>';
+                html += '<th style="text-align: left; padding: 0.5rem;">Description</th>';
+                html += '<th style="text-align: right; padding: 0.5rem;">Size</th>';
+                html += '<th style="text-align: center; padding: 0.5rem;">Actions</th>';
+                html += '</tr></thead><tbody>';
+
+                for (const version of data.versions) {
+                    const timestamp = new Date(version.timestamp).toLocaleString();
+                    const sizeKb = Math.round(version.content_length / 1000);
+
+                    html += '<tr style="border-bottom: 1px solid var(--border);">';
+                    html += `<td style="padding: 0.5rem; color: var(--text-dim); font-size: 0.85rem;">${timestamp}</td>`;
+                    html += `<td style="padding: 0.5rem;">${escapeHtml(version.description)}</td>`;
+                    html += `<td style="padding: 0.5rem; text-align: right; color: var(--text-dim);">${sizeKb}k</td>`;
+                    html += '<td style="padding: 0.5rem; text-align: center;">';
+                    html += `<button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="viewVersion('${version.version_id}')">View</button> `;
+                    html += `<button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="revertToVersion('${version.version_id}')">Revert</button>`;
+                    html += '</td></tr>';
+                }
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (e) {
+                container.innerHTML = `<p style="color: var(--text-dim);">Failed to load versions: ${e}</p>`;
+            }
+        }
+
+        async function viewVersion(versionId) {
+            try {
+                const resp = await fetch(`/api/document/versions/${versionId}`);
+                const data = await resp.json();
+
+                if (data.error) {
+                    showToast('Error: ' + data.error);
+                    return;
+                }
+
+                // Show in document container with a banner
+                const container = document.getElementById('document-content');
+                const statsEl = document.getElementById('document-stats');
+
+                const timestamp = new Date(data.version.timestamp).toLocaleString();
+
+                let html = data.content
+                    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/`(.*?)`/g, '<code>$1</code>')
+                    .replace(/\n\n/g, '</p><p>')
+                    .replace(/\n/g, '<br>');
+
+                container.innerHTML = `
+                    <div style="background: var(--warning); color: black; padding: 0.75rem; margin-bottom: 1rem; border-radius: 4px;">
+                        <strong>Viewing version:</strong> ${timestamp} - ${escapeHtml(data.version.description)}
+                        <button class="btn" style="float: right; padding: 0.25rem 0.5rem; background: white;" onclick="loadDocument()">Back to Current</button>
+                    </div>
+                    <p>${html}</p>
+                `;
+
+                statsEl.textContent = `Version from ${timestamp}`;
+
+                if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                }
+            } catch (e) {
+                showToast('Failed to load version: ' + e);
+            }
+        }
+
+        async function revertToVersion(versionId) {
+            if (!confirm('Are you sure you want to revert to this version? The current document will be saved first.')) {
+                return;
+            }
+
+            try {
+                const resp = await fetch(`/api/document/versions/${versionId}/revert`, {
+                    method: 'POST'
+                });
+                const data = await resp.json();
+
+                if (data.error) {
+                    showToast('Error: ' + data.error);
+                    return;
+                }
+
+                showToast('Reverted successfully!');
+                await loadDocument();
+                await loadVersionHistory();
+            } catch (e) {
+                showToast('Failed to revert: ' + e);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ==================== Annotations ====================
+        //
+        // Annotations use inline markers in the markdown: <!-- @ann:c001 -->
+        // When document loads, markers are converted to anchor spans.
+        // Annotation content is stored in annotations.json via the API.
+
+        let currentAnnotations = {};  // id -> annotation object
+        let unlinkedAnnotations = []; // annotations without markers in document
+        let selectedText = '';
+        let selectedCharOffset = 0;
+
+        // Set up text selection handler on document content
+        document.addEventListener('DOMContentLoaded', () => {
+            const docContent = document.getElementById('document-content');
+            if (docContent) {
+                docContent.addEventListener('mouseup', handleTextSelection);
+            }
+            // Check if formatting fix is in progress
+            checkFormattingStatus();
+        });
+
+        // Calculate character offset of a position within the document
+        function getCharacterOffset(container, node, offset) {
+            // Walk through all text nodes before the target to count characters
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+            let charCount = 0;
+            let current;
+
+            while (current = walker.nextNode()) {
+                if (current === node) {
+                    return charCount + offset;
+                }
+                charCount += current.textContent.length;
+            }
+
+            // If we didn't find the node (might be element node), try to estimate
+            return charCount;
+        }
+
+        function handleTextSelection(event) {
+            const actionMenu = document.getElementById('annotation-action-menu');
+
+            // Hide menu first
+            actionMenu.style.display = 'none';
+
+            // Get selection
+            const selection = window.getSelection();
+            const text = selection.toString().trim();
+
+            if (text.length < 3) {
+                selectedText = '';
+                selectedCharOffset = 0;
+                return;
+            }
+
+            // Check if selection is within document content
+            const docContent = document.getElementById('document-content');
+            if (!selection.anchorNode || !docContent.contains(selection.anchorNode)) {
+                return;
+            }
+
+            selectedText = text;
+
+            // Calculate character offset for the start of selection
+            const range = selection.getRangeAt(0);
+            selectedCharOffset = getCharacterOffset(docContent, range.startContainer, range.startOffset);
+
+            // Position action menu near the selection
+            const rect = range.getBoundingClientRect();
+            actionMenu.style.left = `${rect.left + window.scrollX}px`;
+            actionMenu.style.top = `${rect.bottom + window.scrollY + 5}px`;
+            actionMenu.style.display = 'block';
+        }
+
+        function showCommentPopup() {
+            if (!selectedText) return;
+
+            document.getElementById('annotation-action-menu').style.display = 'none';
+            document.getElementById('comment-selected-text').textContent = selectedText.substring(0, 200) + (selectedText.length > 200 ? '...' : '');
+            document.getElementById('comment-content').value = '';
+            document.getElementById('modal-overlay').style.display = 'block';
+            document.getElementById('comment-popup').style.display = 'block';
+            document.getElementById('comment-content').focus();
+        }
+
+        function hideCommentPopup() {
+            document.getElementById('modal-overlay').style.display = 'none';
+            document.getElementById('comment-popup').style.display = 'none';
+        }
+
+        async function submitComment() {
+            const content = document.getElementById('comment-content').value.trim();
+            if (!content) {
+                alert('Please enter a comment');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/annotations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'comment',
+                        content: content,
+                        char_offset: selectedCharOffset,
+                        text_preview: selectedText.substring(0, 50),
+                        search_text: selectedText  // Full text for finding position in markdown
+                    })
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    hideCommentPopup();
+                    showToast('Comment added');
+                    await loadDocument();  // Reload to show marker
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Failed to add comment: ' + e);
+            }
+        }
+
+        async function addProtectedRegion() {
+            if (!selectedText) return;
+
+            document.getElementById('annotation-action-menu').style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/annotations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'protected',
+                        content: '',
+                        char_offset: selectedCharOffset,
+                        text_preview: selectedText.substring(0, 50),
+                        search_text: selectedText  // Full text for finding position in markdown
+                    })
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    showToast('Text marked as protected');
+                    await loadDocument();  // Reload to show marker
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Failed to protect text: ' + e);
+            }
+        }
+
+        async function deleteAnnotation(annId) {
+            const ann = currentAnnotations[annId];
+            const typeLabel = ann?.type === 'protected' ? 'protection' : 'comment';
+
+            try {
+                const resp = await fetch(`/api/annotations/${annId}`, { method: 'DELETE' });
+                const data = await resp.json();
+
+                if (data.success) {
+                    showToast(`${typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)} deleted`);
+                    await loadDocument();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Failed to delete: ' + e);
+            }
+        }
+
+        // Legacy function names for compatibility
+        function deleteComment(id) { deleteAnnotation(id); }
+        function deleteProtected(id) { deleteAnnotation(id); }
+
+        let annotationMarginVisible = true;
+
+        function toggleAnnotationMargin() {
+            const margin = document.getElementById('annotation-margin');
+            const btn = document.getElementById('toggle-annotations-btn');
+            annotationMarginVisible = !annotationMarginVisible;
+
+            if (annotationMarginVisible) {
+                margin.classList.remove('hidden');
+                btn.textContent = 'Hide Annotations';
+            } else {
+                margin.classList.add('hidden');
+                btn.textContent = 'Show Annotations';
+            }
+        }
+
+        async function loadAnnotationsAndRender() {
+            try {
+                const resp = await fetch('/api/annotations');
+                const data = await resp.json();
+
+                currentAnnotations = data.annotations || {};
+                unlinkedAnnotations = data.unlinked || [];
+
+                console.log('Loaded annotations:', Object.keys(currentAnnotations).length, 'linked,', unlinkedAnnotations.length, 'unlinked');
+
+                // Style anchor spans based on annotation type
+                styleAnnotationAnchors();
+
+                // Render margin notes
+                setTimeout(() => {
+                    renderMarginAnnotations();
+                }, 100);
+            } catch (e) {
+                console.error('Failed to load annotations:', e);
+            }
+        }
+
+        function styleAnnotationAnchors() {
+            // Add visual styling to anchor spans based on annotation type
+            const docContent = document.getElementById('document-content');
+            if (!docContent) return;
+
+            for (const [annId, ann] of Object.entries(currentAnnotations)) {
+                const anchor = docContent.querySelector(`[data-annotation-id="${annId}"]`);
+                if (anchor) {
+                    // Add a small visual indicator at the marker position
+                    anchor.className = `annotation-anchor annotation-${ann.type}`;
+                    anchor.title = ann.type === 'comment'
+                        ? `Comment: ${ann.content}`
+                        : 'Protected region';
+                }
+            }
+        }
+
+        function renderMarginAnnotations() {
+            const margin = document.getElementById('annotation-margin');
+            const docContent = document.getElementById('document-content');
+            if (!margin || !docContent) {
+                console.error('Missing margin or docContent element');
+                return;
+            }
+
+            margin.innerHTML = '';
+
+            // Collect all linked annotations
+            const allAnnotations = [];
+
+            for (const [annId, ann] of Object.entries(currentAnnotations)) {
+                allAnnotations.push({
+                    id: annId,
+                    type: ann.type,
+                    content: ann.content,
+                    text_preview: ann.text_preview || '',
+                    linked: true
+                });
+            }
+
+            // Add unlinked annotations
+            for (const ann of unlinkedAnnotations) {
+                allAnnotations.push({
+                    id: ann.id,
+                    type: ann.type,
+                    content: ann.content,
+                    text_preview: ann.text_preview || '',
+                    linked: false
+                });
+            }
+
+            console.log(`Total annotations to render: ${allAnnotations.length}`);
+
+            if (allAnnotations.length === 0) {
+                margin.innerHTML = '<p style="color: var(--text-dim); font-size: 0.85rem; padding: 0.5rem;">No annotations. Select text to add comments or mark as protected.</p>';
+                return;
+            }
+
+            // Render margin notes
+            for (const ann of allAnnotations) {
+                const textPreview = ann.text_preview || '(no preview)';
+                const notFoundClass = ann.linked ? '' : 'not-found';
+
+                let noteHtml = `
+                    <div class="margin-note ${ann.type} ${notFoundClass}"
+                         data-annotation-id="${ann.id}"
+                         onclick="scrollToAnnotation('${ann.id}')"
+                         onmouseenter="highlightAnnotation('${ann.id}')"
+                         onmouseleave="unhighlightAnnotation('${ann.id}')">
+                        <div class="note-type">${ann.type}${ann.linked ? '' : ' (unlinked)'}</div>
+                        <div class="note-text">"${escapeHtml(textPreview)}"</div>
+                `;
+
+                if (ann.content) {
+                    noteHtml += `<div class="note-content">${escapeHtml(ann.content)}</div>`;
+                }
+
+                noteHtml += `
+                    <div class="note-actions">
+                        <button class="btn-delete" onclick="event.stopPropagation(); deleteAnnotation('${ann.id}')">${ann.type === 'comment' ? 'Delete' : 'Remove'}</button>
+                    </div>
+                `;
+
+                noteHtml += '</div>';
+                margin.innerHTML += noteHtml;
+            }
+        }
+
+        function highlightAnnotation(annotationId) {
+            const el = document.querySelector(`#document-content [data-annotation-id="${annotationId}"]`);
+            if (el) {
+                el.classList.add('highlight');
+            }
+        }
+
+        function unhighlightAnnotation(annotationId) {
+            const el = document.querySelector(`#document-content [data-annotation-id="${annotationId}"]`);
+            if (el) {
+                el.classList.remove('highlight');
+            }
+        }
+
+        function scrollToAnnotation(annotationId) {
+            const el = document.querySelector(`#document-content [data-annotation-id="${annotationId}"]`);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Flash effect
+                el.classList.add('highlight');
+                setTimeout(() => el.classList.remove('highlight'), 2000);
+            } else {
+                // Annotation not linked to document - show message
+                showToast('Annotation not linked (marker may have been removed from document)');
+            }
+        }
+
+        // Hide action menu when clicking elsewhere
+        document.addEventListener('click', (event) => {
+            const actionMenu = document.getElementById('annotation-action-menu');
+            if (!actionMenu.contains(event.target) && !event.target.closest('#document-content')) {
+                actionMenu.style.display = 'none';
+            }
+        });
+
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+        }
+    </script>
+</body>
+</html>

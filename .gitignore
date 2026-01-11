@@ -13,10 +13,13 @@ pool/browser_data/
 *.db
 
 # Logs
-logs/*.log
+logs/
 explorer/logs/
 explorer/data/chat_logs/
 explorer/data/deep_mode_state.json
+
+# Runtime state
+pool/pool_state.json
 
 # OS
 .DS_Store

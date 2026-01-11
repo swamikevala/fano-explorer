@@ -256,3 +256,29 @@ def create_app(config: dict) -> FastAPI:
         )
 
     return app
+
+
+def load_config() -> dict:
+    """Load pool configuration."""
+    import yaml
+    config_path = Path(__file__).parent.parent / "config.yaml"
+    if config_path.exists():
+        return yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    return {}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    config = load_config()
+    server_config = config.get("server", {})
+    host = server_config.get("host", "127.0.0.1")
+    port = server_config.get("port", 9000)
+
+    print(f"\n  Browser Pool Service")
+    print(f"  =====================")
+    print(f"  Running on http://{host}:{port}")
+    print(f"  Press Ctrl+C to stop\n")
+
+    app = create_app(config)
+    uvicorn.run(app, host=host, port=port, log_level="info")
