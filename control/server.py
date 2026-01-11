@@ -10,9 +10,24 @@ import socket
 import subprocess
 import sys
 import threading
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Suppress ResourceWarning about unclosed transports during shutdown
+# These are harmless on Windows when child processes are being terminated
+warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed transport")
+
+# Suppress "Exception ignored in __del__" errors during interpreter shutdown on Windows
+if sys.platform == "win32":
+    def _quiet_unraisablehook(unraisable):
+        # Suppress ValueError from closed pipes during shutdown
+        if unraisable.exc_type is ValueError and "closed pipe" in str(unraisable.exc_value):
+            return
+        sys.__unraisablehook__(unraisable)
+
+    sys.unraisablehook = _quiet_unraisablehook
 
 import re
 import yaml
@@ -1062,11 +1077,29 @@ def create_app() -> Flask:
     @app.route("/api/server/restart", methods=["POST"])
     def api_server_restart():
         """Restart the server."""
-        import signal
 
         def delayed_restart():
             import time
             time.sleep(0.5)  # Let response send first
+
+            # Terminate child processes cleanly before restart
+            # Suppress stderr during shutdown to hide harmless asyncio transport warnings
+            old_stderr = sys.stderr
+            sys.stderr = open(os.devnull, "w")
+            try:
+                for name, proc in list(_processes.items()):
+                    if proc is not None and proc.poll() is None:
+                        try:
+                            proc.terminate()
+                            proc.wait(timeout=3)
+                        except Exception:
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+            finally:
+                sys.stderr.close()
+                sys.stderr = old_stderr
 
             # Start new server process (detached on Windows)
             server_script = Path(__file__).resolve()

@@ -3,8 +3,26 @@
 
 import asyncio
 import logging
+import signal
 import sys
+import warnings
 from pathlib import Path
+
+# Suppress ResourceWarning about unclosed transports during shutdown
+# These are harmless on Windows when the process is being terminated
+warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed transport")
+
+# Suppress "Exception ignored in __del__" errors during interpreter shutdown on Windows
+# These occur when asyncio transports are garbage collected after pipes are closed
+if sys.platform == "win32":
+    def _quiet_unraisablehook(unraisable):
+        # Suppress ValueError from closed pipes during shutdown
+        if unraisable.exc_type is ValueError and "closed pipe" in str(unraisable.exc_value):
+            return
+        # For other unraisable exceptions, print them normally
+        sys.__unraisablehook__(unraisable)
+
+    sys.unraisablehook = _quiet_unraisablehook
 
 # Add paths for imports
 POOL_ROOT = Path(__file__).resolve().parent
