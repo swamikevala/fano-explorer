@@ -1260,6 +1260,11 @@
 
                         <div class="section-title">Backends</div>
                         <div class="backends-grid" id="backends-grid"></div>
+
+                        <div class="section-title">LLM Activity</div>
+                        <div id="llm-activity" onclick="showPage('llm-activity')" style="background: var(--accent); padding: 0.75rem; border-radius: 8px; font-size: 0.85rem; cursor: pointer;" title="Click for details">
+                            <div id="llm-activity-content" style="color: var(--text-dim);">Idle</div>
+                        </div>
                     </div>
 
                     <!-- Explorer -->
@@ -1454,6 +1459,20 @@
                 </div>
             </div>
         </div>
+
+        <!-- LLM Activity Page -->
+        <div id="page-llm-activity" class="page">
+            <div class="container">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <h2 style="margin: 0;">LLM Activity</h2>
+                    <button class="btn btn-secondary" onclick="showPage('dashboard')">&larr; Back to Dashboard</button>
+                </div>
+
+                <div id="llm-activity-detail" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem;">
+                    <!-- Backend cards will be populated by JS -->
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Annotation Action Menu -->
@@ -1512,19 +1531,23 @@
             } else if (pageName === 'explorer') {
                 loadExplorerStats();
                 loadExplorerInsights(currentExplorerStatus);
+            } else if (pageName === 'llm-activity') {
+                loadLLMActivityDetail();
             }
         }
 
         // Refresh intervals
         setInterval(refreshStatus, 10000);
         setInterval(refreshDocumenterActivity, 5000);
+        setInterval(refreshLLMActivity, 2000);  // More frequent for real-time feel
         setInterval(() => {
             if (currentPage === 'logs') loadFullLogs(currentLogsSource, true);
             if (currentPage === 'explorer') loadExplorerStats();
-        }, 5000);
+            if (currentPage === 'llm-activity') loadLLMActivityDetail();
+        }, 2000);
 
         // Restore page from URL hash
-        const validPages = ['dashboard', 'explorer', 'document', 'logs'];
+        const validPages = ['dashboard', 'explorer', 'document', 'logs', 'llm-activity'];
         const hashPage = location.hash.slice(1);
         if (hashPage && validPages.includes(hashPage)) {
             showPage(hashPage);
@@ -1533,6 +1556,7 @@
         // Initial load
         refreshStatus();
         refreshDocumenterActivity();
+        refreshLLMActivity();
 
         async function refreshStatus() {
             try {
@@ -1552,6 +1576,150 @@
             } catch (e) {
                 console.error('Failed to refresh documenter activity:', e);
             }
+        }
+
+        async function refreshLLMActivity() {
+            try {
+                const resp = await fetch('/api/pool/activity');
+                if (!resp.ok) {
+                    document.getElementById('llm-activity-content').innerHTML =
+                        '<span style="color: var(--text-dim);">Pool not running</span>';
+                    return;
+                }
+                const data = await resp.json();
+                updateLLMActivity(data);
+            } catch (e) {
+                document.getElementById('llm-activity-content').innerHTML =
+                    '<span style="color: var(--text-dim);">Pool not running</span>';
+            }
+        }
+
+        function updateLLMActivity(data) {
+            const container = document.getElementById('llm-activity-content');
+            let html = '';
+            let anyWorking = false;
+
+            for (const [name, info] of Object.entries(data)) {
+                if (info.status === 'working' && info.current_work) {
+                    anyWorking = true;
+                    const work = info.current_work;
+                    const elapsed = work.elapsed_seconds || 0;
+                    const preview = work.prompt_preview || '';
+                    // Escape HTML
+                    const safePreview = preview.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                    html += `<div style="margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--bg-card);">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--success); font-weight: 500;">${name}</span>
+                            <span style="color: var(--text-dim);">${elapsed}s</span>
+                        </div>
+                        <div style="color: var(--text); font-size: 0.8rem; line-height: 1.3; word-break: break-word;">${safePreview}</div>
+                    </div>`;
+                }
+            }
+
+            if (!anyWorking) {
+                html = '<span style="color: var(--text-dim);">All LLMs idle</span>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        async function loadLLMActivityDetail() {
+            try {
+                const resp = await fetch('/api/pool/activity/detail');
+                if (!resp.ok) {
+                    document.getElementById('llm-activity-detail').innerHTML =
+                        '<div class="card"><p style="color: var(--text-dim);">Pool not running</p></div>';
+                    return;
+                }
+                const data = await resp.json();
+                renderLLMActivityDetail(data);
+            } catch (e) {
+                document.getElementById('llm-activity-detail').innerHTML =
+                    '<div class="card"><p style="color: var(--error);">Failed to load activity</p></div>';
+            }
+        }
+
+        function renderLLMActivityDetail(data) {
+            const container = document.getElementById('llm-activity-detail');
+            let html = '';
+
+            // Uptime info
+            const uptime = Math.round(data.uptime_seconds || 0);
+            const uptimeStr = uptime > 3600
+                ? `${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m`
+                : `${Math.floor(uptime/60)}m ${uptime%60}s`;
+
+            html += `<div class="card" style="grid-column: 1 / -1;">
+                <div style="display: flex; justify-content: space-between; color: var(--text-dim);">
+                    <span>Pool Uptime: ${uptimeStr}</span>
+                    <span>Last updated: ${new Date().toLocaleTimeString()}</span>
+                </div>
+            </div>`;
+
+            // Backend cards
+            for (const [name, info] of Object.entries(data.backends || {})) {
+                const isWorking = info.status === 'working';
+                const statusColor = isWorking ? 'var(--success)' : 'var(--text-dim)';
+                const statusText = isWorking ? 'Working' : 'Idle';
+
+                html += `<div class="card">
+                    <div class="card-header">
+                        <span class="card-title" style="text-transform: capitalize;">${name}</span>
+                        <span style="color: ${statusColor}; font-weight: 500;">${statusText}</span>
+                    </div>
+                    <div style="margin-bottom: 1rem; color: var(--text-dim); font-size: 0.85rem;">
+                        Queue depth: ${info.queue_depth || 0}
+                    </div>`;
+
+                // Current work
+                if (info.current_work) {
+                    const work = info.current_work;
+                    const elapsed = work.elapsed_seconds || 0;
+                    const prompt = work.prompt || work.prompt_preview || '';
+                    const safePrompt = prompt.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                    html += `<div class="section-title">Current Request (${elapsed}s)</div>
+                        <div style="background: var(--accent); padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;">
+                            <div style="font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text);">${safePrompt}</div>
+                        </div>`;
+                }
+
+                // History
+                if (info.history && info.history.length > 0) {
+                    html += `<div class="section-title">Recent Requests</div>
+                        <div style="max-height: 400px; overflow-y: auto;">`;
+
+                    for (const entry of info.history) {
+                        const time = entry.completed_at
+                            ? new Date(entry.completed_at * 1000).toLocaleTimeString()
+                            : '';
+                        const elapsed = entry.elapsed_seconds || 0;
+                        const success = entry.success;
+                        const statusIcon = success ? '✓' : '✗';
+                        const statusColor = success ? 'var(--success)' : 'var(--error)';
+                        const preview = entry.prompt_preview || '';
+                        const safePreview = preview.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                        html += `<div style="background: var(--accent); padding: 0.5rem 0.75rem; border-radius: 6px; margin-bottom: 0.5rem; font-size: 0.8rem;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                <span style="color: ${statusColor};">${statusIcon} ${entry.request_id || 'request'}</span>
+                                <span style="color: var(--text-dim);">${time} (${elapsed}s)</span>
+                            </div>
+                            <div style="color: var(--text); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${safePreview}</div>
+                        </div>`;
+                    }
+
+                    html += '</div>';
+                } else if (!info.current_work) {
+                    html += `<div style="color: var(--text-dim); font-style: italic;">No recent activity</div>`;
+                }
+
+                html += '</div>';
+            }
+
+            container.innerHTML = html;
         }
 
         function updateDocumenterActivity(data) {

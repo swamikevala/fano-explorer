@@ -41,6 +41,15 @@ class BaseWorker:
         self._task: Optional[asyncio.Task] = None
         self.browser = None  # Set by subclasses
 
+        # Track current work
+        self._current_request_id: Optional[str] = None
+        self._current_prompt: Optional[str] = None
+        self._current_start_time: Optional[float] = None
+
+        # Request history (circular buffer of last N requests)
+        self._request_history: list[dict] = []
+        self._max_history = 20
+
     async def start(self):
         """Start the worker."""
         self._running = True
@@ -79,6 +88,12 @@ class BaseWorker:
                     priority=queued.request.options.priority.value,
                     deep_mode_requested=queued.request.options.deep_mode,
                 )
+
+                # Track current work
+                self._current_request_id = queued.request_id
+                self._current_prompt = queued.request.prompt
+                self._current_start_time = time.time()
+
                 try:
                     response = await self._process_request(queued.request)
                     log.request_complete(
@@ -99,6 +114,29 @@ class BaseWorker:
                         message=str(e),
                     )
                     queued.future.set_result(error_response)
+                finally:
+                    # Save to history before clearing
+                    if self._current_request_id:
+                        elapsed = time.time() - self._current_start_time if self._current_start_time else 0
+                        history_entry = {
+                            "request_id": self._current_request_id,
+                            "prompt": self._current_prompt,
+                            "prompt_length": len(self._current_prompt) if self._current_prompt else 0,
+                            "started_at": self._current_start_time,
+                            "completed_at": time.time(),
+                            "elapsed_seconds": round(elapsed, 2),
+                            "success": response.success if 'response' in dir() else False,
+                            "backend": self.backend_name,
+                        }
+                        self._request_history.append(history_entry)
+                        # Keep only last N entries
+                        if len(self._request_history) > self._max_history:
+                            self._request_history.pop(0)
+
+                    # Clear current work tracking
+                    self._current_request_id = None
+                    self._current_prompt = None
+                    self._current_start_time = None
 
             except asyncio.CancelledError:
                 break
@@ -147,6 +185,52 @@ class BaseWorker:
         except Exception as e:
             log.error("pool.worker.reconnect.failed", backend=self.backend_name, error=str(e))
             return False
+
+    def get_current_work(self) -> Optional[dict]:
+        """
+        Get information about the current work being processed.
+
+        Returns None if idle, or a dict with request details.
+        """
+        if self._current_request_id is None:
+            return None
+
+        elapsed = time.time() - self._current_start_time if self._current_start_time else 0
+
+        # Truncate prompt for display (first 200 chars)
+        prompt_preview = self._current_prompt[:200] if self._current_prompt else ""
+        if self._current_prompt and len(self._current_prompt) > 200:
+            prompt_preview += "..."
+
+        return {
+            "request_id": self._current_request_id,
+            "prompt_preview": prompt_preview,
+            "prompt": self._current_prompt,  # Full prompt for detail view
+            "prompt_length": len(self._current_prompt) if self._current_prompt else 0,
+            "elapsed_seconds": round(elapsed, 1),
+            "backend": self.backend_name,
+        }
+
+    def get_request_history(self, limit: int = 10) -> list[dict]:
+        """
+        Get recent request history.
+
+        Args:
+            limit: Maximum number of entries to return
+
+        Returns:
+            List of recent requests (newest first)
+        """
+        # Return newest first
+        history = list(reversed(self._request_history))[:limit]
+        # Add prompt preview to each entry
+        for entry in history:
+            if entry.get("prompt"):
+                preview = entry["prompt"][:300]
+                if len(entry["prompt"]) > 300:
+                    preview += "..."
+                entry["prompt_preview"] = preview
+        return history
 
     async def _try_enable_deep_mode(self) -> bool:
         """

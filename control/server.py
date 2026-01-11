@@ -304,6 +304,42 @@ def create_app() -> Flask:
             "stats": stats,
         })
 
+    @app.route("/api/pool/activity")
+    def api_pool_activity():
+        """Get current LLM activity from the pool."""
+        config = load_config()
+        pool_host = config.get("llm", {}).get("pool", {}).get("host", "127.0.0.1")
+        pool_port = config.get("llm", {}).get("pool", {}).get("port", 9000)
+
+        if not check_pool_health(pool_host, pool_port):
+            return jsonify({"error": "Pool not running"}), 503
+
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"http://{pool_host}:{pool_port}/activity", timeout=5) as resp:
+                activity = json.loads(resp.read().decode())
+            return jsonify(activity)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/pool/activity/detail")
+    def api_pool_activity_detail():
+        """Get detailed LLM activity including history and full prompts."""
+        config = load_config()
+        pool_host = config.get("llm", {}).get("pool", {}).get("host", "127.0.0.1")
+        pool_port = config.get("llm", {}).get("pool", {}).get("port", 9000)
+
+        if not check_pool_health(pool_host, pool_port):
+            return jsonify({"error": "Pool not running"}), 503
+
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"http://{pool_host}:{pool_port}/activity/detail", timeout=5) as resp:
+                activity = json.loads(resp.read().decode())
+            return jsonify(activity)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/start/<component>", methods=["POST"])
     def api_start(component: str):
         """Start a component."""

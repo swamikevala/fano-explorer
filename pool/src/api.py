@@ -353,6 +353,56 @@ def create_app(config: dict) -> FastAPI:
             version="0.1.0",
         )
 
+    @app.get("/activity")
+    async def activity(include_history: bool = False, history_limit: int = 5):
+        """
+        Get current activity across all backends.
+
+        Args:
+            include_history: If True, include recent request history
+            history_limit: Number of history entries per backend
+
+        Returns what each LLM is currently working on.
+        """
+        result = {}
+        for name, worker in pool.workers.items():
+            work = worker.get_current_work()
+            entry = {
+                "status": "working" if work else "idle",
+                "current_work": work,
+            }
+            if include_history:
+                entry["history"] = worker.get_request_history(history_limit)
+            result[name] = entry
+        return result
+
+    @app.get("/activity/detail")
+    async def activity_detail():
+        """
+        Get detailed activity information for all backends.
+
+        Includes full prompts, history, and queue depths.
+        """
+        depths = pool.queues.get_depths()
+        result = {
+            "backends": {},
+            "queue_depths": depths,
+            "uptime_seconds": time.time() - pool.start_time,
+        }
+
+        for name, worker in pool.workers.items():
+            work = worker.get_current_work()
+            history = worker.get_request_history(10)
+
+            result["backends"][name] = {
+                "status": "working" if work else "idle",
+                "current_work": work,
+                "history": history,
+                "queue_depth": depths.get(name, 0),
+            }
+
+        return result
+
     @app.post("/shutdown")
     async def shutdown_endpoint():
         """
