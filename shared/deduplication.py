@@ -469,17 +469,22 @@ LLMCallback = Callable[[str], Awaitable[str]]
 
 class DeduplicationChecker:
     """
-    Multi-layer deduplication checker.
+    LLM-first deduplication checker.
 
-    Checks new content against known content using multiple strategies:
-    1. Signature matching (instant, catches exact duplicates)
-    2. Heuristic similarity (fast, catches near-duplicates)
-    3. LLM semantic check (thorough, catches semantic duplicates)
+    Uses a cheap/fast LLM (like Haiku or Sonnet) for semantic duplicate detection.
+    This approach prioritizes accuracy over speed, recognizing that mathematical
+    duplicates require understanding, not just keyword matching.
 
-    The checker is designed to be:
-    - LLM-agnostic: Works with any LLM via a simple callback
-    - Efficient: Fast heuristics filter before expensive LLM calls
-    - Configurable: Thresholds and layers can be adjusted
+    Detection layers:
+    1. Signature matching (instant) - catches exact duplicates
+    2. LLM semantic check (primary) - catches semantic duplicates
+
+    Heuristics are available but disabled by default since they often miss
+    semantic duplicates in mathematical content.
+
+    Design principles:
+    - Use cheap LLM for dedup, save expensive quota for exploration
+    - LLM-agnostic: Works with any LLM via simple callback
     - Shared: Used by both explorer and documenter modules
     """
 
@@ -487,16 +492,16 @@ class DeduplicationChecker:
         self,
         llm_callback: Optional[LLMCallback] = None,
         *,
-        # Thresholds (lower = more aggressive matching)
-        keyword_threshold: float = 0.40,
-        concept_threshold: float = 0.45,
-        combined_threshold: float = 0.50,
-        # Features
+        # Features (LLM-first by default)
         use_signature_check: bool = True,
-        use_heuristic_check: bool = True,
+        use_heuristic_check: bool = False,  # Disabled by default - LLM is better for math
         use_llm_check: bool = True,
         use_batch_llm: bool = True,
         batch_size: int = 20,
+        # Heuristic thresholds (only used if use_heuristic_check=True)
+        keyword_threshold: float = 0.40,
+        concept_threshold: float = 0.45,
+        combined_threshold: float = 0.50,
         # LLM confidence requirements
         require_high_confidence: bool = False,
     ):
@@ -505,15 +510,16 @@ class DeduplicationChecker:
 
         Args:
             llm_callback: Async function that takes a prompt and returns LLM response text.
-                         If None, LLM checking is disabled.
-            keyword_threshold: Minimum keyword Jaccard to flag as potential duplicate
-            concept_threshold: Minimum concept Jaccard to flag as potential duplicate
-            combined_threshold: Minimum combined score to flag as potential duplicate
-            use_signature_check: Enable exact signature matching
-            use_heuristic_check: Enable keyword/concept/ngram heuristics
-            use_llm_check: Enable LLM semantic confirmation
-            use_batch_llm: Use batch LLM checking (more efficient)
+                         Use a cheap/fast model (Haiku, Sonnet) to preserve expensive quota.
+                         If None, falls back to heuristics only.
+            use_signature_check: Enable exact signature matching (recommended)
+            use_heuristic_check: Enable keyword/concept heuristics (disabled by default)
+            use_llm_check: Enable LLM semantic check (primary detection method)
+            use_batch_llm: Check multiple items in one LLM call (more efficient)
             batch_size: Max items per batch LLM call
+            keyword_threshold: Heuristic threshold (if enabled)
+            concept_threshold: Heuristic threshold (if enabled)
+            combined_threshold: Heuristic threshold (if enabled)
             require_high_confidence: Only accept LLM duplicates with high confidence
         """
         self.llm_callback = llm_callback
@@ -542,13 +548,10 @@ class DeduplicationChecker:
 
         log.info(
             "deduplication.checker.initialized",
+            use_signature=self.use_signature_check,
+            use_heuristics=self.use_heuristic_check,
             use_llm=self.use_llm_check,
             use_batch=self.use_batch_llm,
-            thresholds={
-                "keyword": keyword_threshold,
-                "concept": concept_threshold,
-                "combined": combined_threshold,
-            },
         )
 
     def add_content(self, item: ContentItem) -> None:
@@ -995,11 +998,12 @@ def get_dedup_checker(
     using the new shared implementation.
 
     Args:
-        claude_reviewer: Object with send_message method (ClaudeReviewer interface)
+        claude_reviewer: Object with send_message method (ClaudeReviewer interface).
+                        Should be a cheap/fast model to preserve expensive quota.
         config: Configuration dict (optional)
 
     Returns:
-        Configured DeduplicationChecker
+        Configured DeduplicationChecker with LLM-first approach
     """
     config = config or {}
     dedup_config = config.get("deduplication", {})
@@ -1013,10 +1017,9 @@ def get_dedup_checker(
 
     return DeduplicationChecker(
         llm_callback=llm_callback,
-        keyword_threshold=dedup_config.get("keyword_threshold", 0.40),
-        concept_threshold=dedup_config.get("concept_threshold", 0.45),
-        combined_threshold=dedup_config.get("combined_threshold", 0.50),
-        use_llm_check=dedup_config.get("use_llm_confirmation", True),
+        use_signature_check=True,
+        use_heuristic_check=dedup_config.get("use_heuristics", False),  # Off by default
+        use_llm_check=dedup_config.get("use_llm", True),
         use_batch_llm=dedup_config.get("use_batch_llm", True),
     )
 

@@ -201,11 +201,11 @@ class Documenter:
         )
 
         # Initialize deduplication checker with LLM callback
+        # Uses cheap LLM (Sonnet) for dedup to preserve expensive quota for exploration
         self.dedup_checker = DeduplicationChecker(
             llm_callback=self._dedup_llm_callback,
-            keyword_threshold=0.40,
-            concept_threshold=0.45,
-            combined_threshold=0.50,
+            use_signature_check=True,
+            use_heuristic_check=False,  # LLM-first approach
             use_batch_llm=True,
             batch_size=15,
         )
@@ -257,11 +257,12 @@ inevitable — structure that must exist, not structure we impose.
         """
         LLM callback for deduplication checks.
 
-        Uses Claude for semantic duplicate detection.
+        Uses Claude Sonnet (cheap/fast) to preserve expensive quota for exploration.
         """
         response = await self.llm_client.send(
             "claude",
             prompt,
+            model="claude-sonnet-4-20250514",  # Use cheap model for dedup
             timeout_seconds=60,
         )
         if response.success:
