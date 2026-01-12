@@ -9,16 +9,17 @@ This module centralizes:
 """
 
 import json
-import logging
 from datetime import datetime
 from typing import Optional
+
+from shared.logging import get_logger
 
 from explorer.src.models import AxiomStore
 from explorer.src.chunking import AtomicInsight, DeduplicationChecker
 from explorer.src.augmentation import Augmenter
 from explorer.src.storage import ExplorerPaths
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "orchestration.blessed")
 
 
 class BlessedStore:
@@ -135,7 +136,7 @@ class BlessedStore:
         with open(self.paths.blessed_insights_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Blessed insight [{insight.id}] added to axiom store")
+        log.info(f"Blessed insight [{insight.id}] added to axiom store")
 
         # Add to deduplication checker for future duplicate detection
         if self.dedup_checker:
@@ -153,9 +154,9 @@ class BlessedStore:
                 )
                 aug_count = len(augmented.augmentations)
                 if aug_count > 0:
-                    logger.info(f"[{insight.id}] Generated {aug_count} augmentations")
+                    log.info(f"[{insight.id}] Generated {aug_count} augmentations")
             except Exception as e:
-                logger.warning(f"[{insight.id}] Augmentation failed: {e}")
+                log.warning(f"[{insight.id}] Augmentation failed: {e}")
 
     def load_blessed_into_dedup(self) -> int:
         """

@@ -7,14 +7,15 @@ correctness - not structure, naturalness, or insight quality.
 """
 
 import asyncio
-import logging
 import os
 import time
 from typing import Optional
 
+from shared.logging import get_logger
+
 from .models import VerificationResult
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "review_panel.deepseek")
 
 
 # Prompt for extracting mathematical claims
@@ -182,7 +183,7 @@ class DeepSeekVerifier:
                 }
             )
             self._initialized = True
-            logger.info(f"[deepseek] Initialized via OpenRouter with model {self.model}")
+            log.info(f"[deepseek] Initialized via OpenRouter with model {self.model}")
         except ImportError:
             raise ImportError(
                 "openai package required for DeepSeek integration. "
@@ -195,7 +196,7 @@ class DeepSeekVerifier:
             self._ensure_client()
             return True
         except (ValueError, ImportError) as e:
-            logger.warning(f"[deepseek] Not available: {e}")
+            log.warning(f"[deepseek] Not available: {e}")
             return False
 
     async def verify_insight(
@@ -218,13 +219,13 @@ class DeepSeekVerifier:
         self._ensure_client()
         start_time = time.time()
 
-        logger.info(f"[deepseek] Verifying insight ({len(insight)} chars)")
+        log.info(f"[deepseek] Verifying insight ({len(insight)} chars)")
 
         try:
             # Step 1: Extract mathematical claims
             if extract_claims:
                 claims = await self._extract_claims(insight)
-                logger.info(f"[deepseek] Extracted {len(claims)} claims")
+                log.info(f"[deepseek] Extracted {len(claims)} claims")
             else:
                 claims = [insight]
 
@@ -295,7 +296,7 @@ class DeepSeekVerifier:
             )
 
         except Exception as e:
-            logger.error(f"[deepseek] Verification failed: {e}")
+            log.error(f"[deepseek] Verification failed: {e}")
             return VerificationResult(
                 verdict="unclear",
                 precise_statement=insight[:200],
@@ -445,7 +446,7 @@ class DeepSeekVerifier:
             return response
 
         except Exception as e:
-            logger.error(f"[deepseek] Proof generation failed: {e}")
+            log.error(f"[deepseek] Proof generation failed: {e}")
             return None
 
 
@@ -463,14 +464,14 @@ def get_deepseek_verifier(config: dict = None) -> Optional[DeepSeekVerifier]:
     math_config = config.get("math_verification", {})
 
     if not math_config.get("enabled", False):
-        logger.info("[deepseek] Math verification disabled in config")
+        log.info("[deepseek] Math verification disabled in config")
         return None
 
     api_key_env = math_config.get("openrouter_api_key_env", "OPENROUTER_API_KEY")
     api_key = os.environ.get(api_key_env)
 
     if not api_key:
-        logger.warning(f"[deepseek] {api_key_env} not set")
+        log.warning(f"[deepseek] {api_key_env} not set")
         return None
 
     return DeepSeekVerifier(

@@ -10,11 +10,12 @@ This module centralizes:
 """
 
 import json
-import logging
 import urllib.error
 import urllib.request
 from datetime import datetime
 from typing import Optional, Any
+
+from shared.logging import get_logger
 
 from llm import LLMClient, GeminiAdapter, ChatGPTAdapter
 
@@ -27,7 +28,7 @@ from explorer.src.browser import (
 from explorer.src.models import ExplorationThread, ExchangeRole
 from explorer.src.storage import ExplorerPaths
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "orchestration.llm")
 
 
 class LLMManager:
@@ -69,28 +70,28 @@ class LLMManager:
         # Check if pool service is available
         pool_available = await self.llm_client.is_pool_available()
         if not pool_available:
-            logger.warning(
+            log.warning(
                 "Pool service not available. Start it with: cd pool && python browser_pool.py start"
             )
-            logger.warning("Browser-based LLMs (Gemini, ChatGPT) will not be available.")
+            log.warning("Browser-based LLMs (Gemini, ChatGPT) will not be available.")
             return False
 
         # Connect to ChatGPT
         try:
             self.chatgpt = ChatGPTAdapter(self.llm_client)
             await self.chatgpt.connect()
-            logger.info("Connected to ChatGPT (via pool)")
+            log.info("Connected to ChatGPT (via pool)")
         except Exception as e:
-            logger.warning(f"Could not connect to ChatGPT: {e}")
+            log.warning(f"Could not connect to ChatGPT: {e}")
             self.chatgpt = None
 
         # Connect to Gemini
         try:
             self.gemini = GeminiAdapter(self.llm_client)
             await self.gemini.connect()
-            logger.info("Connected to Gemini (via pool)")
+            log.info("Connected to Gemini (via pool)")
         except Exception as e:
-            logger.warning(f"Could not connect to Gemini: {e}")
+            log.warning(f"Could not connect to Gemini: {e}")
             self.gemini = None
 
         return self.chatgpt is not None or self.gemini is not None
@@ -242,7 +243,7 @@ class LLMManager:
             if not responses:
                 return
 
-            logger.info(f"[recovery] Found {len(responses)} recovered responses from pool")
+            log.info(f"[recovery] Found {len(responses)} recovered responses from pool")
 
             for item in responses:
                 request_id = item.get("request_id")
@@ -250,7 +251,7 @@ class LLMManager:
                 response_text = item.get("response", "")
                 backend = item.get("backend")
 
-                logger.info(
+                log.info(
                     f"[recovery] Processing recovered response from {backend}",
                     extra={
                         "request_id": request_id,
@@ -275,9 +276,9 @@ class LLMManager:
                                 )
                             )
                             thread.save(self.paths.explorations_dir)
-                            logger.info(f"[recovery] Added recovered response to thread {thread_id}")
+                            log.info(f"[recovery] Added recovered response to thread {thread_id}")
                     except Exception as e:
-                        logger.warning(
+                        log.warning(
                             f"[recovery] Could not add response to thread {thread_id}: {e}"
                         )
 
@@ -286,9 +287,9 @@ class LLMManager:
                     clear_url = f"http://{pool_host}:{pool_port}/recovered/{request_id}"
                     req = urllib.request.Request(clear_url, method="DELETE")
                     urllib.request.urlopen(req, timeout=5)
-                    logger.info(f"[recovery] Cleared recovered response {request_id}")
+                    log.info(f"[recovery] Cleared recovered response {request_id}")
                 except Exception as e:
-                    logger.warning(
+                    log.warning(
                         f"[recovery] Could not clear recovered response {request_id}: {e}"
                     )
 
@@ -296,4 +297,4 @@ class LLMManager:
             # Pool not running or not reachable - that's fine
             pass
         except Exception as e:
-            logger.warning(f"[recovery] Error checking for recovered responses: {e}")
+            log.warning(f"[recovery] Error checking for recovered responses: {e}")

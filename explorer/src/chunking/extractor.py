@@ -6,7 +6,6 @@ Claude Opus is the primary extraction author (best at precise articulation).
 Falls back to browser LLMs if Claude is unavailable.
 """
 
-import logging
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -14,10 +13,12 @@ from .models import AtomicInsight, InsightStatus
 from .prompts import build_extraction_prompt, format_blessed_summary, parse_extraction_response
 from .dependencies import resolve_dependencies
 
+from shared.logging import get_logger
+
 if TYPE_CHECKING:
     from review_panel.claude_api import ClaudeReviewer
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "chunking.extractor")
 
 
 class AtomicExtractor:
@@ -71,10 +72,10 @@ class AtomicExtractor:
         """
         # Skip if already extracted
         if thread.chunks_extracted:
-            logger.info(f"[extractor] Thread {thread.id} already extracted, skipping")
+            log.info(f"[extractor] Thread {thread.id} already extracted, skipping")
             return []
 
-        logger.info(f"[extractor] Extracting insights from thread {thread.id}")
+        log.info(f"[extractor] Extracting insights from thread {thread.id}")
 
         # Build context
         thread_context = thread.get_context_for_prompt(max_exchanges=20)
@@ -96,10 +97,10 @@ class AtomicExtractor:
         extraction_model = "claude"
         try:
             if claude_reviewer and claude_reviewer.is_available():
-                logger.info(f"[extractor] Using Claude Opus for extraction")
+                log.info(f"[extractor] Using Claude Opus for extraction")
                 response = await claude_reviewer.send_message(prompt, extended_thinking=False)
             elif fallback_model and fallback_model_name:
-                logger.info(f"[extractor] Claude unavailable, using {fallback_model_name} as fallback")
+                log.info(f"[extractor] Claude unavailable, using {fallback_model_name} as fallback")
                 extraction_model = fallback_model_name
                 if fallback_model_name == "chatgpt":
                     response = await fallback_model.send_message(prompt, use_pro_mode=False, use_thinking_mode=True)
@@ -108,10 +109,10 @@ class AtomicExtractor:
             else:
                 raise ValueError("No extraction model available (Claude or fallback)")
 
-            logger.info(f"[extractor] Got response ({len(response)} chars)")
+            log.info(f"[extractor] Got response ({len(response)} chars)")
 
         except Exception as e:
-            logger.error(f"[extractor] Failed to get extraction response: {e}")
+            log.error(f"[extractor] Failed to get extraction response: {e}")
             thread.extraction_note = f"Extraction failed: {e}"
             return []
 
@@ -119,12 +120,12 @@ class AtomicExtractor:
         parsed_insights = parse_extraction_response(response)
 
         if not parsed_insights:
-            logger.info(f"[extractor] No insights extracted from thread {thread.id}")
+            log.info(f"[extractor] No insights extracted from thread {thread.id}")
             thread.chunks_extracted = True
             thread.extraction_note = "No insights met quality bar"
             return []
 
-        logger.info(f"[extractor] Parsed {len(parsed_insights)} raw insights")
+        log.info(f"[extractor] Parsed {len(parsed_insights)} raw insights")
 
         # Filter by confidence
         confidence_order = ["high", "medium", "low"]
@@ -134,7 +135,7 @@ class AtomicExtractor:
             if confidence_order.index(p.get("confidence", "low")) <= min_idx
         ]
 
-        logger.info(f"[extractor] {len(filtered)} insights after confidence filter")
+        log.info(f"[extractor] {len(filtered)} insights after confidence filter")
 
         # Create AtomicInsight objects
         insights = []
@@ -167,13 +168,13 @@ class AtomicExtractor:
         # Save insights
         for insight in insights:
             insight.save(self.data_dir)
-            logger.info(f"[extractor] Saved insight {insight.id}: {insight.insight[:50]}...")
+            log.info(f"[extractor] Saved insight {insight.id}: {insight.insight[:50]}...")
 
         # Mark thread as extracted
         thread.chunks_extracted = True
         thread.extraction_note = f"Extracted {len(insights)} insights"
 
-        logger.info(f"[extractor] Completed extraction: {len(insights)} insights from thread {thread.id}")
+        log.info(f"[extractor] Completed extraction: {len(insights)} insights from thread {thread.id}")
 
         return insights
 
@@ -188,7 +189,7 @@ class AtomicExtractor:
             try:
                 insights.append(AtomicInsight.load(json_path))
             except Exception as e:
-                logger.warning(f"[extractor] Could not load {json_path}: {e}")
+                log.warning(f"[extractor] Could not load {json_path}: {e}")
 
         return insights
 
@@ -203,7 +204,7 @@ class AtomicExtractor:
             try:
                 insights.append(AtomicInsight.load(json_path))
             except Exception as e:
-                logger.warning(f"[extractor] Could not load {json_path}: {e}")
+                log.warning(f"[extractor] Could not load {json_path}: {e}")
 
         return insights
 

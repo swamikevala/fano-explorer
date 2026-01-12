@@ -8,13 +8,14 @@ This module centralizes:
 - Thread context building
 """
 
-import logging
 from typing import Optional
+
+from shared.logging import get_logger
 
 from explorer.src.models import ExplorationThread, ThreadStatus, AxiomStore
 from explorer.src.storage import ExplorerPaths
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "orchestration.threads")
 
 
 class ThreadManager:
@@ -57,7 +58,7 @@ class ThreadManager:
                     if thread.status == ThreadStatus.ACTIVE:
                         threads.append(thread)
                 except Exception as e:
-                    logger.warning(f"Could not load thread {filepath}: {e}")
+                    log.warning(f"Could not load thread {filepath}: {e}")
 
         return threads[: self.config.get("max_active_threads", 5)]
 
@@ -154,12 +155,12 @@ class ThreadManager:
         Returns:
             Newly spawned thread if new seeds found, None otherwise.
         """
-        logger.info("[seeds] Checking for new/unexplored seeds...")
+        log.info("[seeds] Checking for new/unexplored seeds...")
 
         # Get all current seeds
         all_seeds = self.axioms.get_seed_aphorisms()
         if not all_seeds:
-            logger.info("[seeds] No seeds found")
+            log.info("[seeds] No seeds found")
             return None
 
         all_seed_ids = {s.id for s in all_seeds}
@@ -178,17 +179,17 @@ class ThreadManager:
         new_seed_ids = all_seed_ids - explored_seed_ids
 
         if not new_seed_ids:
-            logger.info(f"[seeds] All {len(all_seed_ids)} seeds have been explored")
+            log.info(f"[seeds] All {len(all_seed_ids)} seeds have been explored")
             return None
 
         new_seeds = [s for s in all_seeds if s.id in new_seed_ids]
-        logger.info(f"[seeds] Found {len(new_seeds)} NEW seeds to explore:")
+        log.info(f"[seeds] Found {len(new_seeds)} NEW seeds to explore:")
         for seed in new_seeds:
-            logger.info(f"[seeds]   - {seed.id}: {seed.text[:60]}...")
+            log.info(f"[seeds]   - {seed.id}: {seed.text[:60]}...")
 
         # Spawn a new thread specifically for these seeds
         thread = self.spawn_thread_for_seeds(new_seeds)
-        logger.info(f"[seeds] Spawned new thread {thread.id} for new seeds")
+        log.info(f"[seeds] Spawned new thread {thread.id} for new seeds")
 
         return thread
 

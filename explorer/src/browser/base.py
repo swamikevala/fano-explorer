@@ -6,7 +6,6 @@ Handles Playwright setup, session persistence, and rate limit detection.
 
 import asyncio
 import json
-import logging
 import os
 import re
 from datetime import datetime, timedelta
@@ -17,10 +16,12 @@ import yaml
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
+from shared.logging import get_logger
+
 # Load environment variables
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "browser")
 
 # Firewall authentication settings
 FIREWALL_DOMAIN = os.environ.get("FIREWALL_DOMAIN", "")
@@ -61,7 +62,7 @@ class ChatLogger:
             f.write(f"**Model:** {self.model_name}\n")
             f.write("\n---\n\n")
 
-        print(f"[{self.model_name}] Chat log: {self.current_session}")
+        log.debug("browser.chat.session_started", model=self.model_name, log_file=str(self.current_session))
         return session_id
 
     def log_exchange(self, prompt: str, response: str):
@@ -155,7 +156,7 @@ async def get_browser_context(model: str, playwright_instance=None):
     storage_dir = BROWSER_DATA_DIR / model
     storage_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"[DEBUG] Using browser data dir: {storage_dir}")
+    log.debug("browser.context.init", model=model, storage_dir=str(storage_dir))
     
     if playwright_instance is None:
         playwright_instance = await async_playwright().start()
@@ -174,7 +175,7 @@ async def get_browser_context(model: str, playwright_instance=None):
     ]
 
     if disable_ssl:
-        print(f"[{model}] SSL verification DISABLED for browser (corporate proxy workaround)")
+        log.warning("browser.ssl.disabled", model=model, reason="corporate_proxy_workaround")
         chrome_args.extend([
             "--ignore-certificate-errors",
             "--ignore-ssl-errors",
@@ -271,17 +272,17 @@ class BaseLLMInterface:
         self.context, self.playwright = await get_browser_context(self.model_name)
         self.page = await self.context.new_page()
 
-        print(f"[{self.model_name}] Navigating to {self.config['url']}...")
+        log.info("browser.navigation.start", model=self.model_name, url=self.config['url'])
 
         # Use firewall-aware navigation
         success = await self._navigate_with_firewall_check(self.config["url"])
         if not success:
-            print(f"[{self.model_name}] WARNING: Navigation may have failed due to firewall")
+            log.warning("browser.navigation.firewall_issue", model=self.model_name)
 
         await asyncio.sleep(1)  # Let page settle
 
         # Log current URL (helps debug redirects)
-        print(f"[{self.model_name}] Current URL: {self.page.url}")
+        log.debug("browser.navigation.complete", model=self.model_name, current_url=self.page.url)
     
     async def disconnect(self):
         """Close browser connection."""
@@ -320,13 +321,12 @@ class BaseLLMInterface:
                 missing.append(name)
 
         if missing:
-            print(f"\n{'='*60}")
-            print(f"[{self.model_name}] SELECTOR HEALTH WARNING")
-            print(f"{'='*60}")
-            print(f"The following UI elements were not found: {', '.join(missing)}")
-            print(f"This may indicate that {self.model_name}'s UI has changed.")
-            print(f"Check src/browser/{self.model_name}.py and update selectors.")
-            print(f"{'='*60}\n")
+            log.warning(
+                "browser.selector.health_check_failed",
+                model=self.model_name,
+                missing_selectors=missing,
+                hint=f"UI may have changed. Check src/browser/{self.model_name}.py"
+            )
 
         return results
     
@@ -350,7 +350,7 @@ class BaseLLMInterface:
         current_url = self.page.url
         # Check if the URL contains the firewall domain
         if FIREWALL_DOMAIN in current_url:
-            logger.info(f"[{self.model_name}] Firewall redirect detected: {current_url}")
+            log.info(f"[{self.model_name}] Firewall redirect detected: {current_url}")
             return True
         return False
 
@@ -376,7 +376,7 @@ class BaseLLMInterface:
             return False
 
         print(f"[{self.model_name}] Firewall detected - authenticating...")
-        logger.info(f"[{self.model_name}] Attempting firewall authentication")
+        log.info(f"[{self.model_name}] Attempting firewall authentication")
 
         try:
             # Wait for page to fully load
@@ -419,14 +419,14 @@ class BaseLLMInterface:
                 try:
                     username_field = await self.page.query_selector(selector)
                     if username_field and await username_field.is_visible():
-                        logger.info(f"[{self.model_name}] Found username field: {selector}")
+                        log.info(f"[{self.model_name}] Found username field: {selector}")
                         break
                     username_field = None
                 except Exception:
                     continue
 
             if not username_field:
-                logger.error(f"[{self.model_name}] Could not find username field")
+                log.error(f"[{self.model_name}] Could not find username field")
                 return False
 
             # Find and fill password
@@ -435,14 +435,14 @@ class BaseLLMInterface:
                 try:
                     password_field = await self.page.query_selector(selector)
                     if password_field and await password_field.is_visible():
-                        logger.info(f"[{self.model_name}] Found password field: {selector}")
+                        log.info(f"[{self.model_name}] Found password field: {selector}")
                         break
                     password_field = None
                 except Exception:
                     continue
 
             if not password_field:
-                logger.error(f"[{self.model_name}] Could not find password field")
+                log.error(f"[{self.model_name}] Could not find password field")
                 return False
 
             # Enter credentials
@@ -460,7 +460,7 @@ class BaseLLMInterface:
                 try:
                     submit_button = await self.page.query_selector(selector)
                     if submit_button and await submit_button.is_visible():
-                        logger.info(f"[{self.model_name}] Found submit button: {selector}")
+                        log.info(f"[{self.model_name}] Found submit button: {selector}")
                         break
                     submit_button = None
                 except Exception:
@@ -470,7 +470,7 @@ class BaseLLMInterface:
                 await submit_button.click()
             else:
                 # Fallback: press Enter
-                logger.info(f"[{self.model_name}] No submit button found, pressing Enter")
+                log.info(f"[{self.model_name}] No submit button found, pressing Enter")
                 await self.page.keyboard.press("Enter")
 
             # Wait for authentication to complete
@@ -479,16 +479,16 @@ class BaseLLMInterface:
 
             # Check if we're still on the firewall page
             if self._is_firewall_redirect():
-                logger.error(f"[{self.model_name}] Still on firewall page after auth attempt")
+                log.error(f"[{self.model_name}] Still on firewall page after auth attempt")
                 print(f"[{self.model_name}] Firewall authentication may have failed - still on portal")
                 return False
 
             print(f"[{self.model_name}] Firewall authentication successful!")
-            logger.info(f"[{self.model_name}] Firewall authentication completed")
+            log.info(f"[{self.model_name}] Firewall authentication completed")
             return True
 
         except Exception as e:
-            logger.error(f"[{self.model_name}] Firewall auth error: {e}")
+            log.error(f"[{self.model_name}] Firewall auth error: {e}")
             print(f"[{self.model_name}] Firewall authentication error: {e}")
             return False
 

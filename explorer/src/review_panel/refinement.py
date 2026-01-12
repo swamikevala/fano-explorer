@@ -19,9 +19,10 @@ New approach (active):
 - ABANDON vote allows early exit for unsalvageable chunks
 """
 
-import logging
 from datetime import datetime
 from typing import Optional
+
+from shared.logging import get_logger
 
 from .models import ReviewRound, ReviewResponse, RefinementRecord
 from .claude_api import ClaudeReviewer
@@ -32,7 +33,7 @@ from chunking.prompts import (
     parse_post_refinement_review,
 )
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "review_panel.refinement")
 
 
 async def run_refinement_round(
@@ -61,10 +62,10 @@ async def run_refinement_round(
         Returns (None, original_insight) if refinement fails
     """
     if not claude_reviewer or not claude_reviewer.is_available():
-        logger.warning("[refinement] Claude not available for refinement")
+        log.warning("[refinement] Claude not available for refinement")
         return None, original_insight
 
-    logger.info(f"[refinement] Starting refinement round (version {current_version} → {current_version + 1})")
+    log.info(f"[refinement] Starting refinement round (version {current_version} → {current_version + 1})")
 
     # Extract critiques from Round 1
     gemini_resp = round1.responses.get("gemini")
@@ -88,13 +89,13 @@ async def run_refinement_round(
     try:
         # Send to Claude Opus for refinement
         response = await claude_reviewer.send_message(prompt, extended_thinking=False)
-        logger.info(f"[refinement] Got response ({len(response)} chars)")
+        log.info(f"[refinement] Got response ({len(response)} chars)")
 
         # Parse the response
         parsed = parse_refinement_response(response)
 
         if not parsed.get("refined_insight"):
-            logger.warning("[refinement] No refined insight in response")
+            log.warning("[refinement] No refined insight in response")
             return None, original_insight
 
         refined_insight = parsed["refined_insight"]
@@ -113,13 +114,13 @@ async def run_refinement_round(
             timestamp=datetime.now(),
         )
 
-        logger.info(f"[refinement] Created refinement: {len(refinement.changes_made)} changes, "
+        log.info(f"[refinement] Created refinement: {len(refinement.changes_made)} changes, "
                    f"confidence={refinement.refinement_confidence}")
 
         return refinement, refined_insight
 
     except Exception as e:
-        logger.error(f"[refinement] Failed: {e}")
+        log.error(f"[refinement] Failed: {e}")
         return None, original_insight
 
 
@@ -153,7 +154,7 @@ async def run_post_refinement_review(
     """
     from .round2 import _parse_review_response
 
-    logger.info("[refinement] Starting post-refinement review")
+    log.info("[refinement] Starting post-refinement review")
 
     responses = {}
     mind_changes = []
@@ -217,7 +218,7 @@ async def run_post_refinement_review(
             )
             responses[llm_name] = response
 
-            logger.info(f"[refinement] {llm_name}: {parsed['rating']} "
+            log.info(f"[refinement] {llm_name}: {parsed['rating']} "
                        f"(issues addressed: {parsed['issues_addressed']})")
 
             # Track mind changes
@@ -232,7 +233,7 @@ async def run_post_refinement_review(
                 ))
 
         except Exception as e:
-            logger.error(f"[refinement] {llm_name} review failed: {e}")
+            log.error(f"[refinement] {llm_name} review failed: {e}")
 
     # Determine outcome
     if not responses:

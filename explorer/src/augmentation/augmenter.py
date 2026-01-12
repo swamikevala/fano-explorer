@@ -6,7 +6,6 @@ Analyzes blessed insights and generates appropriate augmentations
 """
 
 import asyncio
-import logging
 import re
 import shutil
 import subprocess
@@ -38,7 +37,9 @@ from .prompts import (
     parse_verification_response,
 )
 
-logger = logging.getLogger(__name__)
+from shared.logging import get_logger
+
+log = get_logger("explorer", "augmentation.augmenter")
 
 
 class Augmenter:
@@ -75,7 +76,7 @@ class Augmenter:
         # Type-specific config
         self.types_config = self.config.get("types", {})
 
-        logger.info(f"[augmenter] Initialized (enabled={self.enabled})")
+        log.info(f"[augmenter] Initialized (enabled={self.enabled})")
 
     async def augment_insight(
         self,
@@ -99,13 +100,13 @@ class Augmenter:
             AugmentedInsight with generated augmentations
         """
         if not self.enabled:
-            logger.info(f"[augmenter] Augmentation disabled, skipping {insight_id}")
+            log.info(f"[augmenter] Augmentation disabled, skipping {insight_id}")
             return AugmentedInsight(
                 insight_id=insight_id,
                 insight_text=insight_text,
             )
 
-        logger.info(f"[augmenter] Analyzing insight {insight_id}")
+        log.info(f"[augmenter] Analyzing insight {insight_id}")
 
         # Step 1: Analyze what augmentations would help
         analysis = await self._analyze_insight(
@@ -119,7 +120,7 @@ class Augmenter:
         )
 
         if not self.auto_generate:
-            logger.info(f"[augmenter] Auto-generate disabled, returning analysis only")
+            log.info(f"[augmenter] Auto-generate disabled, returning analysis only")
             return augmented
 
         # Step 2: Generate recommended augmentations
@@ -182,7 +183,7 @@ class Augmenter:
         # Save to disk
         augmented.save(self.data_dir)
 
-        logger.info(
+        log.info(
             f"[augmenter] Generated {len(augmentations)} augmentations for {insight_id}"
         )
 
@@ -205,12 +206,12 @@ class Augmenter:
         try:
             response = await self.claude.send_message(prompt, extended_thinking=False)
             analysis = parse_analysis_response(response)
-            logger.info(
+            log.info(
                 f"[augmenter] Analysis: recommendations={analysis.recommendations}"
             )
             return analysis
         except Exception as e:
-            logger.error(f"[augmenter] Analysis failed: {e}")
+            log.error(f"[augmenter] Analysis failed: {e}")
             return AugmentationAnalysis()
 
     async def _generate_diagram(
@@ -220,7 +221,7 @@ class Augmenter:
         diagram_description: str,
     ) -> Optional[Augmentation]:
         """Generate a diagram for an insight."""
-        logger.info(f"[augmenter] Generating diagram ({diagram_type})")
+        log.info(f"[augmenter] Generating diagram ({diagram_type})")
 
         prompt = build_diagram_prompt(insight, diagram_type, diagram_description)
 
@@ -229,7 +230,7 @@ class Augmenter:
             code, caption = parse_diagram_response(response)
 
             if not code:
-                logger.warning("[augmenter] No diagram code generated")
+                log.warning("[augmenter] No diagram code generated")
                 return None
 
             return Augmentation(
@@ -240,12 +241,12 @@ class Augmenter:
                 generated_by="claude",
             )
         except Exception as e:
-            logger.error(f"[augmenter] Diagram generation failed: {e}")
+            log.error(f"[augmenter] Diagram generation failed: {e}")
             return None
 
     async def _execute_diagram(self, aug: Augmentation, insight_id: str) -> Augmentation:
         """Execute diagram code to generate the image file."""
-        logger.info(f"[augmenter] Executing diagram code for {insight_id}")
+        log.info(f"[augmenter] Executing diagram code for {insight_id}")
 
         timeout = self.types_config.get("diagram", {}).get("timeout_seconds", 60)
         chunk_dir = self.data_dir / f"chunk_{insight_id}"
@@ -295,7 +296,7 @@ class Augmenter:
                     aug.execution_success = True
                     aug.verified = True
                     aug.verification_notes = "Diagram generated successfully"
-                    logger.info(f"[augmenter] Diagram saved to {output_path}")
+                    log.info(f"[augmenter] Diagram saved to {output_path}")
                 else:
                     # Check for other image files that might have been created
                     for ext in ["png", "svg", "jpg", "pdf"]:
@@ -308,20 +309,20 @@ class Augmenter:
                             aug.execution_success = True
                             aug.verified = True
                             aug.verification_notes = "Diagram generated successfully"
-                            logger.info(f"[augmenter] Diagram saved to {target}")
+                            log.info(f"[augmenter] Diagram saved to {target}")
                             return aug
 
                     aug.execution_success = False
                     aug.verification_notes = "Code ran but no image file was generated"
-                    logger.warning("[augmenter] Diagram code ran but no image found")
+                    log.warning("[augmenter] Diagram code ran but no image found")
             else:
                 aug.execution_success = False
                 aug.verification_notes = f"Diagram generation failed: {result['error']}"
-                logger.warning(f"[augmenter] Diagram execution failed: {result['error']}")
+                log.warning(f"[augmenter] Diagram execution failed: {result['error']}")
 
             return aug
         except Exception as e:
-            logger.error(f"[augmenter] Diagram execution error: {e}")
+            log.error(f"[augmenter] Diagram execution error: {e}")
             aug.execution_success = False
             aug.verification_notes = f"Execution error: {e}"
             return aug
@@ -333,7 +334,7 @@ class Augmenter:
         table_description: str,
     ) -> Optional[Augmentation]:
         """Generate a table for an insight."""
-        logger.info(f"[augmenter] Generating table ({table_type})")
+        log.info(f"[augmenter] Generating table ({table_type})")
 
         prompt = build_table_prompt(insight, table_type, table_description)
 
@@ -342,7 +343,7 @@ class Augmenter:
             table, notes, verification = parse_table_response(response)
 
             if not table:
-                logger.warning("[augmenter] No table generated")
+                log.warning("[augmenter] No table generated")
                 return None
 
             # Combine table with notes
@@ -360,7 +361,7 @@ class Augmenter:
                 generated_by="claude",
             )
         except Exception as e:
-            logger.error(f"[augmenter] Table generation failed: {e}")
+            log.error(f"[augmenter] Table generation failed: {e}")
             return None
 
     async def _generate_proof(
@@ -370,7 +371,7 @@ class Augmenter:
         proof_dependencies: list[str],
     ) -> Optional[Augmentation]:
         """Generate a formal proof for an insight."""
-        logger.info(f"[augmenter] Generating proof")
+        log.info(f"[augmenter] Generating proof")
 
         prompt = build_proof_prompt(insight, proof_strategy, proof_dependencies)
 
@@ -379,7 +380,7 @@ class Augmenter:
             proof, notes = parse_proof_response(response)
 
             if not proof:
-                logger.warning("[augmenter] No proof generated")
+                log.warning("[augmenter] No proof generated")
                 return None
 
             return Augmentation(
@@ -390,12 +391,12 @@ class Augmenter:
                 generated_by="claude",
             )
         except Exception as e:
-            logger.error(f"[augmenter] Proof generation failed: {e}")
+            log.error(f"[augmenter] Proof generation failed: {e}")
             return None
 
     async def _verify_proof(self, aug: Augmentation) -> Augmentation:
         """Verify a generated proof using another LLM call."""
-        logger.info(f"[augmenter] Verifying proof {aug.id}")
+        log.info(f"[augmenter] Verifying proof {aug.id}")
 
         # Extract theorem from proof
         lines = aug.content.split("\n")
@@ -418,10 +419,10 @@ class Augmenter:
             if suggestions and suggestions.lower() != "none":
                 aug.verification_notes += f"\nSuggestions: {suggestions}"
 
-            logger.info(f"[augmenter] Proof verification: {verdict}")
+            log.info(f"[augmenter] Proof verification: {verdict}")
             return aug
         except Exception as e:
-            logger.error(f"[augmenter] Proof verification failed: {e}")
+            log.error(f"[augmenter] Proof verification failed: {e}")
             aug.verification_notes = f"Verification failed: {e}"
             return aug
 
@@ -432,7 +433,7 @@ class Augmenter:
         code_description: str,
     ) -> Optional[Augmentation]:
         """Generate verification code for an insight."""
-        logger.info(f"[augmenter] Generating code ({code_purpose})")
+        log.info(f"[augmenter] Generating code ({code_purpose})")
 
         prompt = build_code_prompt(insight, code_purpose, code_description)
 
@@ -441,7 +442,7 @@ class Augmenter:
             code, expected, proves = parse_code_response(response)
 
             if not code:
-                logger.warning("[augmenter] No code generated")
+                log.warning("[augmenter] No code generated")
                 return None
 
             caption = proves or expected or "Verification code"
@@ -454,12 +455,12 @@ class Augmenter:
                 generated_by="claude",
             )
         except Exception as e:
-            logger.error(f"[augmenter] Code generation failed: {e}")
+            log.error(f"[augmenter] Code generation failed: {e}")
             return None
 
     async def _execute_code(self, aug: Augmentation) -> Augmentation:
         """Execute generated code and capture output."""
-        logger.info(f"[augmenter] Executing code {aug.id}")
+        log.info(f"[augmenter] Executing code {aug.id}")
 
         timeout = self.types_config.get("code", {}).get("timeout_seconds", 30)
 
@@ -482,17 +483,17 @@ class Augmenter:
 
             if result["success"]:
                 aug.verification_notes = "Code executed successfully"
-                logger.info(f"[augmenter] Code execution successful")
+                log.info(f"[augmenter] Code execution successful")
             else:
                 aug.verification_notes = f"Code execution failed: {result['error']}"
-                logger.warning(f"[augmenter] Code execution failed: {result['error']}")
+                log.warning(f"[augmenter] Code execution failed: {result['error']}")
 
             # Clean up temp file
             Path(temp_path).unlink(missing_ok=True)
 
             return aug
         except Exception as e:
-            logger.error(f"[augmenter] Code execution error: {e}")
+            log.error(f"[augmenter] Code execution error: {e}")
             aug.execution_success = False
             aug.verification_notes = f"Execution error: {e}"
             return aug
@@ -552,11 +553,11 @@ def get_augmenter(
     aug_config = config.get("augmentation", {})
 
     if not aug_config.get("enabled", True):
-        logger.info("[augmenter] Augmentation disabled in config")
+        log.info("[augmenter] Augmentation disabled in config")
         return None
 
     if not claude_reviewer or not claude_reviewer.is_available():
-        logger.warning("[augmenter] Claude not available, augmentation disabled")
+        log.warning("[augmenter] Claude not available, augmentation disabled")
         return None
 
     return Augmenter(claude_reviewer, config, data_dir)

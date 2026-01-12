@@ -13,8 +13,12 @@ import re
 from datetime import datetime
 from typing import Optional
 
+from shared.logging import get_logger
+
 from .base import BaseLLMInterface, rate_tracker
 from .model_selector import deep_mode_tracker
+
+log = get_logger("explorer", "browser.chatgpt")
 
 
 class ChatGPTInterface(BaseLLMInterface):
@@ -578,21 +582,18 @@ class ChatGPTInterface(BaseLLMInterface):
 
     async def _monitor_and_notify_url(self):
         """Monitor URL and notify when it changes to include conversation ID."""
-        import logging
-        logger = logging.getLogger(__name__)
-
         for _ in range(60):  # Check for 60 seconds
             try:
                 current_url = self.page.url
                 # ChatGPT conversation URLs contain /c/
                 if "/c/" in current_url:
-                    logger.info(f"[chatgpt] URL changed to conversation URL: {current_url}")
+                    log.info("browser.chatgpt.url_changed", url=current_url)
                     self._notify_url_change(current_url)
                     return
             except Exception as e:
-                logger.debug(f"[chatgpt] URL monitor error: {e}")
+                log.debug("browser.chatgpt.url_monitor_error", error=str(e))
             await asyncio.sleep(1)
-        logger.warning("[chatgpt] URL monitor: never saw URL change to conversation URL")
+        log.warning("browser.chatgpt.url_monitor_timeout")
 
     async def is_generating(self) -> bool:
         """Check if ChatGPT is currently generating a response."""
@@ -622,12 +623,9 @@ class ChatGPTInterface(BaseLLMInterface):
         Returns:
             Response text if ready, None if still generating or no response.
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         # If still generating, return None
         if await self.is_generating():
-            logger.info("[chatgpt] try_get_response: still generating")
+            log.info("browser.chatgpt.try_get_response", status="still_generating")
             return None
 
         # Selectors for assistant messages
@@ -644,12 +642,12 @@ class ChatGPTInterface(BaseLLMInterface):
                     last_msg = messages[-1]
                     response = await last_msg.inner_text()
                     if response and len(response) > 10:
-                        logger.info(f"[chatgpt] try_get_response: found response ({len(response)} chars)")
+                        log.info("browser.chatgpt.try_get_response", status="found", chars=len(response))
                         return response.strip()
             except Exception:
                 continue
 
-        logger.info("[chatgpt] try_get_response: no response found")
+        log.info("browser.chatgpt.try_get_response", status="not_found")
         return None
 
 

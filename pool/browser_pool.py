@@ -12,22 +12,15 @@ Usage:
 """
 
 import asyncio
-import logging
 import sys
 from pathlib import Path
 
 import yaml
 import uvicorn
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-    ],
-)
-logger = logging.getLogger(__name__)
+from shared.logging import get_logger
+
+log = get_logger("pool", "browser_pool")
 
 
 def load_config() -> dict:

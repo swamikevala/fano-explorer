@@ -18,7 +18,6 @@ This is a lightweight coordinator that delegates to specialized modules:
 """
 
 import asyncio
-import logging
 import yaml
 from pathlib import Path
 from typing import Optional
@@ -26,6 +25,8 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+from shared.logging import get_logger
 
 from explorer.src.models import AxiomStore, ThreadStatus
 from explorer.src.storage.db import Database
@@ -48,16 +49,7 @@ from explorer.src.orchestration import (
     BlessedStore,
 )
 
-# Setup logging with UTF-8 encoding for Windows compatibility
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler('logs/exploration.log', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "orchestrator")
 
 
 # Load config
@@ -126,8 +118,8 @@ class Orchestrator:
                                    starting the main exploration loop.
         """
         self.running = True
-        logger.info("Starting exploration loop")
-        logger.info("Review UI available at: http://localhost:8765")
+        log.info("Starting exploration loop")
+        log.info("Review UI available at: http://localhost:8765")
 
         # Connect to LLMs and initialize components
         await self._connect_and_initialize()
@@ -154,11 +146,11 @@ class Orchestrator:
     def stop(self):
         """Signal the orchestrator to stop."""
         self.running = False
-        logger.info("Stop signal received")
+        log.info("Stop signal received")
 
     async def cleanup(self):
         """Clean up resources (called after interrupt)."""
-        logger.info("Cleaning up...")
+        log.info("Cleaning up...")
         await self.llm_manager.disconnect()
 
     async def _connect_and_initialize(self):
@@ -175,7 +167,7 @@ class Orchestrator:
                     config=CONFIG,
                     data_dir=self.paths.data_dir,
                 )
-                logger.info("Initialized automated review panel")
+                log.info("Initialized automated review panel")
 
                 # Initialize augmenter
                 augmenter = None
@@ -186,7 +178,7 @@ class Orchestrator:
                         data_dir=self.paths.data_dir,
                     )
                     if augmenter:
-                        logger.info("Initialized augmenter for blessed insights")
+                        log.info("Initialized augmenter for blessed insights")
 
                 # Initialize deduplication checker
                 dedup_checker = None
@@ -208,7 +200,7 @@ class Orchestrator:
                 # Load existing blessed insights into dedup checker
                 if dedup_checker:
                     count = self.blessed_store.load_blessed_into_dedup()
-                    logger.info(f"Initialized deduplication checker with {count} known insights")
+                    log.info(f"Initialized deduplication checker with {count} known insights")
 
                 # Initialize insight processor
                 self.insight_processor = InsightProcessor(
@@ -221,7 +213,7 @@ class Orchestrator:
                 )
 
             except Exception as e:
-                logger.warning(f"Could not initialize review panel: {e}")
+                log.warning(f"Could not initialize review panel: {e}")
                 self.reviewer = None
 
         # Create minimal blessed store if reviewer not available
@@ -247,10 +239,10 @@ class Orchestrator:
 
         For each such thread, runs atomic extraction and review panel.
         """
-        logger.info("[backlog] Scanning for unprocessed threads...")
+        log.info("[backlog] Scanning for unprocessed threads...")
 
         if not self.paths.explorations_dir.exists():
-            logger.info("[backlog] No explorations directory found")
+            log.info("[backlog] No explorations directory found")
             return
 
         # Find all threads needing extraction
@@ -267,23 +259,23 @@ class Orchestrator:
                         unprocessed.append(thread)
 
             except Exception as e:
-                logger.warning(f"[backlog] Could not load {filepath}: {e}")
+                log.warning(f"[backlog] Could not load {filepath}: {e}")
 
         if not unprocessed:
-            logger.info("[backlog] No unprocessed threads found")
+            log.info("[backlog] No unprocessed threads found")
             return
 
-        logger.info(f"[backlog] Found {len(unprocessed)} threads to process")
+        log.info(f"[backlog] Found {len(unprocessed)} threads to process")
 
         # Get an available model for extraction
         model_name, model = self.llm_manager.get_backlog_model()
         if not model:
-            logger.warning("[backlog] No model available for extraction")
+            log.warning("[backlog] No model available for extraction")
             return
 
         # Process each thread
         for i, thread in enumerate(unprocessed, 1):
-            logger.info(f"[backlog] Processing {i}/{len(unprocessed)}: {thread.id}")
+            log.info(f"[backlog] Processing {i}/{len(unprocessed)}: {thread.id}")
 
             try:
                 await self.insight_processor.extract_and_review(
@@ -294,24 +286,24 @@ class Orchestrator:
                     self.blessed_store,
                 )
             except Exception as e:
-                logger.error(f"[backlog] Failed to process {thread.id}: {e}")
+                log.error(f"[backlog] Failed to process {thread.id}: {e}")
 
             # Small delay between threads to avoid rate limits
             if i < len(unprocessed):
                 await asyncio.sleep(5)
 
-        logger.info(f"[backlog] Completed processing {len(unprocessed)} threads")
+        log.info(f"[backlog] Completed processing {len(unprocessed)} threads")
 
     async def _exploration_cycle(self):
         """Single cycle of the exploration loop."""
         available_models = self.llm_manager.get_available_models()
-        logger.info(
+        log.info(
             f"Available models: {list(available_models.keys())} "
             f"(gemini={self.llm_manager.gemini is not None})"
         )
 
         if not available_models:
-            logger.info("All models rate-limited, waiting...")
+            log.info("All models rate-limited, waiting...")
             await asyncio.sleep(self.orchestration_config["backoff_base"])
             return
 
@@ -321,7 +313,7 @@ class Orchestrator:
         if thread is None:
             # Spawn a new thread
             thread = self.thread_manager.spawn_new_thread()
-            logger.info(f"Spawned new thread: {thread.topic[:60]}...")
+            log.info(f"Spawned new thread: {thread.topic[:60]}...")
 
         # Perform work on the thread
         if thread.needs_exploration:

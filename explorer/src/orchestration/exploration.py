@@ -8,15 +8,16 @@ This module centralizes:
 - Response extraction and cleaning
 """
 
-import logging
 import re
 from datetime import datetime
 from typing import Any
 
+from shared.logging import get_logger
+
 from explorer.src.models import ExplorationThread, ExchangeRole, AxiomStore
 from explorer.src.storage import ExplorerPaths
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "orchestration.exploration")
 
 
 class ExplorationEngine:
@@ -69,7 +70,7 @@ class ExplorationEngine:
         """
         prompt = self._build_exploration_prompt(thread)
 
-        logger.info(f"Exploring [{thread.id}] with {model_name}")
+        log.info(f"Exploring [{thread.id}] with {model_name}")
 
         try:
             response, deep_mode_used = await llm_manager.send_message(
@@ -94,12 +95,12 @@ class ExplorationEngine:
             )
 
             mode_str = " [DEEP]" if deep_mode_used else ""
-            logger.info(
+            log.info(
                 f"Exploration complete, {len(response)} -> {len(clean_response)} chars{mode_str}"
             )
 
         except Exception as e:
-            logger.error(f"Exploration failed: {e}")
+            log.error(f"Exploration failed: {e}")
 
     async def do_critique(
         self,
@@ -129,7 +130,7 @@ class ExplorationEngine:
             # Fallback to original model
             critique_model_name, critique_model = model_name, model
 
-        logger.info(f"Critiquing [{thread.id}] with {critique_model_name}")
+        log.info(f"Critiquing [{thread.id}] with {critique_model_name}")
 
         try:
             response, deep_mode_used = await llm_manager.send_message(
@@ -154,12 +155,12 @@ class ExplorationEngine:
             )
 
             mode_str = " [DEEP]" if deep_mode_used else ""
-            logger.info(
+            log.info(
                 f"Critique complete, {len(response)} -> {len(clean_response)} chars{mode_str}"
             )
 
         except Exception as e:
-            logger.error(f"Critique failed: {e}")
+            log.error(f"Critique failed: {e}")
 
     def _build_exploration_prompt(self, thread: ExplorationThread) -> str:
         """Build the prompt for exploration based on seed aphorisms."""
@@ -284,7 +285,7 @@ Structure your response as:
         first_match = re.search(section_pattern, response)
         if not first_match:
             # No structured sections found, return original (but log warning)
-            logger.warning("No structured sections found in response, keeping original")
+            log.warning("No structured sections found in response, keeping original")
             return response
 
         # Extract from first section onwards

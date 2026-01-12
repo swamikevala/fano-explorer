@@ -9,8 +9,9 @@ This module centralizes:
 """
 
 import asyncio
-import logging
 from typing import Optional, Any
+
+from shared.logging import get_logger
 
 from explorer.src.browser import GeminiQuotaExhausted
 from explorer.src.models import ExplorationThread
@@ -24,7 +25,7 @@ from explorer.src.chunking import (
 from explorer.src.review_panel import AutomatedReviewer
 from explorer.src.storage import ExplorerPaths
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "orchestration.insights")
 
 
 class InsightProcessor:
@@ -88,13 +89,13 @@ class InsightProcessor:
             blessed_store: BlessedStore for blessed insights
         """
         if thread.chunks_extracted:
-            logger.info(f"[{thread.id}] Already extracted, skipping")
+            log.info(f"[{thread.id}] Already extracted, skipping")
             return
 
         # Check if insights already exist for this thread (from previous interrupted run)
         existing_insights = self._get_existing_insights_for_thread(thread.id)
         if existing_insights:
-            logger.info(
+            log.info(
                 f"[{thread.id}] Found {len(existing_insights)} existing insights, skipping extraction"
             )
             review_config = self.config.get("review_panel", {})
@@ -103,7 +104,7 @@ class InsightProcessor:
                     i for i in existing_insights if not getattr(i, "reviewed_at", None)
                 ]
                 if unreviewed:
-                    logger.info(
+                    log.info(
                         f"[{thread.id}] Running review on {len(unreviewed)} unreviewed insights"
                     )
                     blessed_summary = blessed_store.get_blessed_summary()
@@ -126,7 +127,7 @@ class InsightProcessor:
             await self._save_and_review_insights(thread, insights, blessed_store)
 
         except Exception as e:
-            logger.error(f"[{thread.id}] Extraction failed: {e}")
+            log.error(f"[{thread.id}] Extraction failed: {e}")
             thread.extraction_note = f"Extraction error: {str(e)}"
             await asyncio.to_thread(thread.save, self.paths.data_dir)
 
@@ -154,7 +155,7 @@ class InsightProcessor:
 
         # Choose extraction method based on config
         if self.use_panel_extraction:
-            logger.info(f"[{thread.id}] Starting PANEL extraction (all 3 LLMs)")
+            log.info(f"[{thread.id}] Starting PANEL extraction (all 3 LLMs)")
             insights = await self.panel_extractor.extract_from_thread(
                 thread=thread,
                 gemini=llm_manager.gemini,
@@ -168,7 +169,7 @@ class InsightProcessor:
                 if claude_reviewer and claude_reviewer.is_available()
                 else model_name
             )
-            logger.info(f"[{thread.id}] Starting single-LLM extraction with {author}")
+            log.info(f"[{thread.id}] Starting single-LLM extraction with {author}")
             insights = await self.extractor.extract_from_thread(
                 thread=thread,
                 claude_reviewer=claude_reviewer,
@@ -180,15 +181,15 @@ class InsightProcessor:
         if not insights:
             # Check if extraction_note indicates an error
             if thread.extraction_note and "failed" in thread.extraction_note.lower():
-                logger.warning(
+                log.warning(
                     f"[{thread.id}] Extraction failed, will retry: {thread.extraction_note}"
                 )
                 return None
-            logger.info(f"[{thread.id}] No insights extracted")
+            log.info(f"[{thread.id}] No insights extracted")
             thread.extraction_note = "No insights met extraction criteria"
             return None
 
-        logger.info(f"[{thread.id}] Extracted {len(insights)} atomic insights")
+        log.info(f"[{thread.id}] Extracted {len(insights)} atomic insights")
 
         # Deduplicate insights against known blessed insights
         if self.dedup_checker:
@@ -201,7 +202,7 @@ class InsightProcessor:
                     new_id=insight.id,
                 )
                 if is_dup:
-                    logger.info(
+                    log.info(
                         f"[{thread.id}] Skipping duplicate insight [{insight.id}] (similar to {dup_of_id})"
                     )
                     duplicate_count += 1
@@ -210,12 +211,12 @@ class InsightProcessor:
                     self.dedup_checker.add_known_insight(insight.id, insight.insight)
 
             if duplicate_count > 0:
-                logger.info(f"[{thread.id}] Filtered out {duplicate_count} duplicate insights")
+                log.info(f"[{thread.id}] Filtered out {duplicate_count} duplicate insights")
 
             insights = unique_insights
 
         if not insights:
-            logger.info(f"[{thread.id}] All insights were duplicates")
+            log.info(f"[{thread.id}] All insights were duplicates")
             thread.extraction_note = "All insights were duplicates of existing ones"
             return None
 
@@ -242,7 +243,7 @@ class InsightProcessor:
         # Mark thread as extracted
         thread.chunks_extracted = True
         await asyncio.to_thread(thread.save, self.paths.data_dir)
-        logger.info(f"[{thread.id}] Extraction and review complete")
+        log.info(f"[{thread.id}] Extraction and review complete")
 
     async def _review_insights(
         self,
@@ -256,7 +257,7 @@ class InsightProcessor:
         Always processes the highest priority item next. If a higher priority
         item appears (via UI), pauses the current review and switches to it.
         """
-        logger.info(f"Starting priority-based review of {len(insights)} insights")
+        log.info(f"Starting priority-based review of {len(insights)} insights")
 
         # Process insights by priority until none remain
         processed_ids = set()
@@ -267,23 +268,23 @@ class InsightProcessor:
             insight_id, priority, rounds_completed = self.reviewer.get_highest_priority_pending()
 
             if not insight_id:
-                logger.info("No more pending insights to review")
+                log.info("No more pending insights to review")
                 break
 
             if insight_id in processed_ids:
                 # Already tried this one, may be stuck - skip for now
-                logger.warning(f"[{insight_id}] Already processed, skipping to avoid loop")
+                log.warning(f"[{insight_id}] Already processed, skipping to avoid loop")
                 break
 
             # Load the insight
             insight = self._load_insight_by_id(insight_id)
             if not insight:
-                logger.warning(f"[{insight_id}] Could not load insight, skipping")
+                log.warning(f"[{insight_id}] Could not load insight, skipping")
                 processed_ids.add(insight_id)
                 continue
 
             try:
-                logger.info(
+                log.info(
                     f"Reviewing [{insight.id}] priority={priority} (rounds_completed={rounds_completed})"
                 )
 
@@ -300,7 +301,7 @@ class InsightProcessor:
 
                 # Check if review was paused for higher priority item
                 if review.is_paused:
-                    logger.info(
+                    log.info(
                         f"[{insight.id}] Paused for higher priority item {review.paused_for_id}"
                     )
                     continue
@@ -316,7 +317,7 @@ class InsightProcessor:
                 break
 
             except Exception as e:
-                logger.error(f"[{insight.id}] Review failed: {e}")
+                log.error(f"[{insight.id}] Review failed: {e}")
                 insight.status = InsightStatus.PENDING
                 await asyncio.to_thread(insight.save, self.paths.chunks_dir)
                 processed_ids.add(insight.id)
@@ -330,7 +331,7 @@ class InsightProcessor:
         """Handle the outcome of an insight review."""
         # Get outcome action
         action = self.reviewer.get_outcome_action(review)
-        logger.info(f"[{insight.id}] Review outcome: {review.final_rating} ({action})")
+        log.info(f"[{insight.id}] Review outcome: {review.final_rating} ({action})")
 
         # Apply rating to insight
         insight.rating = review.final_rating
@@ -339,7 +340,7 @@ class InsightProcessor:
 
         # If the insight was modified during deliberation, update the text
         if review.final_insight_text and review.final_insight_text != insight.insight:
-            logger.info(f"[{insight.id}] Using modified insight text from deliberation")
+            log.info(f"[{insight.id}] Using modified insight text from deliberation")
             insight.insight = review.final_insight_text
 
         # Update status based on rating
@@ -359,15 +360,12 @@ class InsightProcessor:
 
     def _handle_quota_exhausted(self, insight: AtomicInsight, error: GeminiQuotaExhausted) -> None:
         """Handle Gemini Deep Think quota exhaustion."""
-        logger.error(f"[{insight.id}] Gemini Deep Think quota exhausted")
-        print(f"\n{'='*60}")
-        print("GEMINI DEEP THINK QUOTA EXHAUSTED")
-        print(f"{'='*60}")
-        print(f"\nDeep Think mode is unavailable until: {error.resume_time}")
-        print("\nReviews require Gemini Deep Think for quality analysis.")
-        print("Progress has been saved and can be resumed later.")
-        print(f"\nPlease wait until {error.resume_time} before running reviews again.")
-        print(f"{'='*60}\n")
+        log.error(
+            "orchestration.insights.quota_exhausted",
+            insight_id=insight.id,
+            resume_time=str(error.resume_time),
+            service="gemini_deep_think",
+        )
 
         # Save the insight in its current state (pending)
         insight.status = InsightStatus.PENDING

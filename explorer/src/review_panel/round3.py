@@ -13,9 +13,10 @@ be able to collaboratively refine the insight during deliberation.
 """
 
 import asyncio
-import logging
 from datetime import datetime
 from typing import Optional, Tuple
+
+from shared.logging import get_logger
 
 from .models import ReviewResponse, ReviewRound, MindChange, RefinementRecord
 from .prompts import (
@@ -32,7 +33,7 @@ try:
 except ImportError:
     GeminiQuotaExhausted = None
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "review_panel.round3")
 
 
 async def run_round3(
@@ -59,7 +60,7 @@ async def run_round3(
         - modified_insight: The new insight text if modification was accepted, else None
         - refinement_record: Record of the modification if one was accepted, else None
     """
-    logger.info("[round3] Starting structured deliberation with collaborative modification")
+    log.info("[round3] Starting structured deliberation with collaborative modification")
 
     # Identify majority and minority positions
     majority_rating = round2.get_majority_rating()
@@ -68,14 +69,14 @@ async def run_round3(
 
     if not majority_rating or not minority_llms:
         # This shouldn't happen - Round 3 only runs on 2-1 splits
-        logger.warning("[round3] No clear majority/minority, skipping deliberation")
+        log.warning("[round3] No clear majority/minority, skipping deliberation")
         return round2, [], False, None, None
 
     minority_llm = minority_llms[0]  # Should be exactly one
     minority_rating = round2.responses[minority_llm].rating
 
-    logger.info(f"[round3] Majority ({majority_rating}): {majority_llms}")
-    logger.info(f"[round3] Minority ({minority_rating}): {minority_llms}")
+    log.info(f"[round3] Majority ({majority_rating}): {majority_llms}")
+    log.info(f"[round3] Minority ({minority_rating}): {minority_llms}")
 
     # Build summaries for prompts
     majority_reasoning = _summarize_reasoning(round2, majority_llms)
@@ -97,7 +98,7 @@ async def run_round3(
     )
 
     if not minority_result:
-        logger.warning("[round3] Could not get minority argument")
+        log.warning("[round3] Could not get minority argument")
         return round2, [], True, None, None
 
     # minority_result is now a dict with argument and optional modification
@@ -105,9 +106,9 @@ async def run_round3(
     proposed_modification = minority_result.get("proposed_modification", "")
     modification_rationale = minority_result.get("modification_rationale", "")
 
-    logger.info(f"[round3] Minority argument: {minority_argument[:100]}...")
+    log.info(f"[round3] Minority argument: {minority_argument[:100]}...")
     if proposed_modification:
-        logger.info(f"[round3] Minority proposed modification: {proposed_modification[:100]}...")
+        log.info(f"[round3] Minority proposed modification: {proposed_modification[:100]}...")
 
     # Step 2: Get majority's response (including evaluation of any proposed modification)
     majority_result = await _get_majority_response(
@@ -123,23 +124,23 @@ async def run_round3(
     )
 
     if not majority_result:
-        logger.warning("[round3] Could not get majority response")
+        log.warning("[round3] Could not get majority response")
         return round2, [], True, None, None
 
     majority_response = majority_result.get("response_to_argument", "")
     modification_accepted = majority_result.get("accept_modification", False)
     modification_assessment = majority_result.get("modification_assessment", "")
 
-    logger.info(f"[round3] Majority response: {majority_response[:100]}...")
+    log.info(f"[round3] Majority response: {majority_response[:100]}...")
     if proposed_modification:
-        logger.info(f"[round3] Modification accepted: {modification_accepted}")
+        log.info(f"[round3] Modification accepted: {modification_accepted}")
 
     # Track accepted modification
     modified_insight = None
     refinement_record = None
 
     if proposed_modification and modification_accepted:
-        logger.info("[round3] MODIFICATION ACCEPTED - Final votes will be on modified insight")
+        log.info("[round3] MODIFICATION ACCEPTED - Final votes will be on modified insight")
         modified_insight = proposed_modification
         refinement_record = RefinementRecord(
             from_version=1,  # Will be updated by caller with actual version
@@ -173,7 +174,7 @@ async def run_round3(
     except Exception as e:
         # Check for quota exhaustion - build partial round and re-raise
         if GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted):
-            logger.error(f"[round3] Quota exhausted during final votes")
+            log.error(f"[round3] Quota exhausted during final votes")
             final_responses = getattr(e, 'partial_responses', {})
             mind_changes = getattr(e, 'mind_changes', [])
             # Build partial round for saving
@@ -200,13 +201,13 @@ async def run_round3(
     if len(unique_ratings) == 1:
         outcome = "resolved"
         is_disputed = False
-        logger.info(f"[round3] Resolved to unanimous: {final_ratings[0]}")
+        log.info(f"[round3] Resolved to unanimous: {final_ratings[0]}")
         if modified_insight:
-            logger.info("[round3] Unanimous on MODIFIED insight!")
+            log.info("[round3] Unanimous on MODIFIED insight!")
     else:
         outcome = "disputed"
         is_disputed = True
-        logger.info(f"[round3] Still disputed: {final_ratings}")
+        log.info(f"[round3] Still disputed: {final_ratings}")
 
     review_round = ReviewRound(
         round_number=3,
@@ -270,7 +271,7 @@ async def _get_minority_argument(
             "modification_rationale": parsed.get("modification_rationale", ""),
         }
     except Exception as e:
-        logger.error(f"[round3] Error getting minority argument: {e}")
+        log.error(f"[round3] Error getting minority argument: {e}")
         return None
 
 
@@ -312,7 +313,7 @@ async def _get_majority_response(
                 "modification_assessment": parsed.get("modification_assessment", ""),
             }
         except Exception as e:
-            logger.warning(f"[round3] Error getting majority response from {llm}: {e}")
+            log.warning(f"[round3] Error getting majority response from {llm}: {e}")
             continue
 
     return None
@@ -362,7 +363,7 @@ async def _get_final_votes(
         elif llm == "claude" and claude_reviewer:
             tasks.append((llm, is_minority, _final_vote(llm, prompt, None, None, claude_reviewer, is_minority, deliberation_minority_argument, deliberation_majority_response)))
         else:
-            logger.warning(f"[round3] {llm} not available for final vote")
+            log.warning(f"[round3] {llm} not available for final vote")
 
     # Execute in parallel
     results = await asyncio.gather(*[t[2] for t in tasks], return_exceptions=True)
@@ -376,13 +377,13 @@ async def _get_final_votes(
         if isinstance(result, Exception):
             # Check for Gemini quota exhaustion - special handling
             if GeminiQuotaExhausted and isinstance(result, GeminiQuotaExhausted):
-                logger.error(f"[round3] Gemini Deep Think quota exhausted: {result}")
+                log.error(f"[round3] Gemini Deep Think quota exhausted: {result}")
                 quota_exhausted_exception = result
                 # Carry forward Round 2 response
                 if llm in round2.responses:
                     responses[llm] = round2.responses[llm]
             else:
-                logger.error(f"[round3] Final vote failed for {llm}: {result}")
+                log.error(f"[round3] Final vote failed for {llm}: {result}")
                 # Carry forward Round 2 response
                 if llm in round2.responses:
                     responses[llm] = round2.responses[llm]
@@ -396,7 +397,7 @@ async def _get_final_votes(
 
                 if r2_rating != r3_rating:
                     reason_suffix = " (on modified insight)" if modification_accepted else ""
-                    logger.info(f"[round3] {llm} changed mind: {r2_rating} -> {r3_rating}{reason_suffix}")
+                    log.info(f"[round3] {llm} changed mind: {r2_rating} -> {r3_rating}{reason_suffix}")
                     stance = result.final_stance or ("conceded" if is_minority else "persuaded")
                     mind_changes.append(MindChange(
                         llm=llm,
@@ -408,7 +409,7 @@ async def _get_final_votes(
 
     # If quota was exhausted, re-raise AFTER collecting other LLM results
     if quota_exhausted_exception:
-        logger.warning(f"[round3] Re-raising quota exhaustion after collecting other LLM results")
+        log.warning(f"[round3] Re-raising quota exhaustion after collecting other LLM results")
         quota_exhausted_exception.partial_responses = responses
         quota_exhausted_exception.mind_changes = mind_changes
         raise quota_exhausted_exception

@@ -12,7 +12,6 @@ Usage:
 import sys
 import os
 import asyncio
-import logging
 from pathlib import Path
 from datetime import datetime
 
@@ -43,6 +42,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from shared.logging import get_logger
+
+log = get_logger("documenter", "fano_documenter")
 console = Console(force_terminal=True, legacy_windows=False)
 
 
@@ -57,7 +59,7 @@ def handle_asyncio_exception(loop, context):
             return
     # Log other exceptions normally
     msg = context.get("message", "Unhandled exception in event loop")
-    logging.error(f"Asyncio error: {msg}")
+    log.error("asyncio.error", message=msg)
 
 
 def print_banner():

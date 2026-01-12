@@ -8,14 +8,15 @@ This module centralizes:
 - Synthesis response parsing
 """
 
-import logging
 import re
 from datetime import datetime
+
+from shared.logging import get_logger
 
 from explorer.src.models import ExplorationThread, ExchangeRole, ThreadStatus, Chunk
 from explorer.src.storage import ExplorerPaths
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "orchestration.synthesis")
 
 
 class SynthesisEngine:
@@ -124,12 +125,12 @@ class SynthesisEngine:
         available_models = llm_manager.get_available_models(check_rate_limits=False)
         model_name = llm_manager.select_model_for_task("synthesis", available_models)
         if not model_name:
-            logger.warning("No model available for synthesis")
+            log.warning("No model available for synthesis")
             return
 
         model = available_models[model_name]
 
-        logger.info(f"Synthesizing chunk from thread [{thread.id}] with {model_name}")
+        log.info(f"Synthesizing chunk from thread [{thread.id}] with {model_name}")
 
         # Build synthesis prompt
         synthesis_prompt = self._build_synthesis_prompt(thread)
@@ -145,7 +146,7 @@ class SynthesisEngine:
 
             mode_str = " [DEEP]" if deep_mode_used else ""
             if not deep_mode_used and self.synthesis_config.get("prefer_deep_mode", True):
-                logger.warning("Deep mode requested but not available")
+                log.warning("Deep mode requested but not available")
 
             # Parse the synthesis response
             title, summary, content = self._parse_synthesis(response, thread)
@@ -172,7 +173,7 @@ class SynthesisEngine:
             thread.status = ThreadStatus.CHUNK_READY
             thread.save(self.paths.data_dir)
 
-            logger.info(f"Created chunk [{chunk.id}]: {chunk.title}{mode_str}")
+            log.info(f"Created chunk [{chunk.id}]: {chunk.title}{mode_str}")
 
             # Atomic extraction and review (if enabled and function provided)
             chunking_config = self.config.get("chunking", {})
@@ -180,7 +181,7 @@ class SynthesisEngine:
                 await extract_and_review_fn(thread, model_name, model)
 
         except Exception as e:
-            logger.error(f"Synthesis failed: {e}")
+            log.error(f"Synthesis failed: {e}")
 
     def _build_synthesis_prompt(self, thread: ExplorationThread) -> str:
         """Build prompt for chunk synthesis."""

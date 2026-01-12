@@ -17,11 +17,12 @@ modified version.
 """
 
 import asyncio
-import logging
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
+
+from shared.logging import get_logger
 
 from .models import (
     ChunkReview,
@@ -47,7 +48,7 @@ from .claude_api import get_claude_reviewer, ClaudeReviewer
 from .deepseek_verifier import get_deepseek_verifier, DeepSeekVerifier
 from .math_triggers import needs_math_verification
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "review_panel.reviewer")
 
 
 def _get_modification_consensus(
@@ -116,11 +117,11 @@ def _get_modification_consensus(
 
     # Only accept if rating is ? or better (don't accept from ABANDON or ✗ voters)
     if best["rating_score"] >= 2:  # ? or ⚡
-        logger.info(f"[consensus] Accepting modification from {best['llm']} ({best['mode']}, rated {best['rating']})")
+        log.info(f"[consensus] Accepting modification from {best['llm']} ({best['mode']}, rated {best['rating']})")
         return best["modification"], best["llm"], best["rationale"]
 
     # If only low-rating LLMs proposed modifications, log but don't accept
-    logger.info(f"[consensus] Modifications proposed but from low-rating reviewers, not accepting")
+    log.info(f"[consensus] Modifications proposed but from low-rating reviewers, not accepting")
     return None, None, None
 
 
@@ -158,17 +159,17 @@ class AutomatedReviewer:
         # Initialize Claude reviewer
         self.claude_reviewer = get_claude_reviewer(self.panel_config)
         if self.claude_reviewer:
-            logger.info("[reviewer] Claude API available")
+            log.info("[reviewer] Claude API available")
         else:
-            logger.warning("[reviewer] Claude API not available")
+            log.warning("[reviewer] Claude API not available")
 
         # Initialize DeepSeek math verifier
         self.deepseek = get_deepseek_verifier(config)
         if self.deepseek and self.deepseek.is_available():
-            logger.info("[reviewer] DeepSeek math verifier available")
+            log.info("[reviewer] DeepSeek math verifier available")
         else:
             self.deepseek = None
-            logger.info("[reviewer] DeepSeek math verifier not configured")
+            log.info("[reviewer] DeepSeek math verifier not configured")
 
         # Check we have at least 2 reviewers
         available = sum([
@@ -177,7 +178,7 @@ class AutomatedReviewer:
             1 if self.claude_reviewer else 0,
         ])
         if available < 2:
-            logger.warning(f"[reviewer] Only {available} reviewers available, need at least 2")
+            log.warning(f"[reviewer] Only {available} reviewers available, need at least 2")
 
     def _record_modification(
         self,
@@ -211,7 +212,7 @@ class AutomatedReviewer:
             round_proposed=round_num,
         )
         review.add_refinement(refinement_record)
-        logger.info(f"[reviewer] Insight modified to v{current_version + 1}")
+        log.info(f"[reviewer] Insight modified to v{current_version + 1}")
         return mod, current_version + 1, mod, mod_source
 
     def _handle_quota_exception(
@@ -228,7 +229,7 @@ class AutomatedReviewer:
         if not (GeminiQuotaExhausted and isinstance(e, GeminiQuotaExhausted)):
             return False
 
-        logger.error(f"[reviewer] Gemini Deep Think quota exhausted in Round {round_num}: {e}")
+        log.error(f"[reviewer] Gemini Deep Think quota exhausted in Round {round_num}: {e}")
 
         # Get partial round from exception if available
         if hasattr(e, 'partial_round'):
@@ -241,7 +242,7 @@ class AutomatedReviewer:
         # Mark as paused with quota exhaustion reason
         review.is_paused = True
         review.paused_for_id = f"QUOTA_EXHAUSTED:{e.resume_time}"
-        logger.info(f"[reviewer] Review paused due to quota exhaustion, resume at: {e.resume_time}")
+        log.info(f"[reviewer] Review paused due to quota exhaustion, resume at: {e.resume_time}")
         return True
 
     async def _run_verification_vote(
@@ -258,7 +259,7 @@ class AutomatedReviewer:
         Returns:
             Tuple of (final_rating, is_disputed)
         """
-        logger.info("[reviewer] Running verification vote on modified insight")
+        log.info("[reviewer] Running verification vote on modified insight")
         print("  [⚡] Modification proposed - running verification vote...")
 
         # Build verification prompt
@@ -283,14 +284,14 @@ class AutomatedReviewer:
         vote_names = [t[0] for t in vote_tasks]
         vote_coros = [t[1] for t in vote_tasks]
 
-        logger.info(f"[reviewer] Running verification votes: {vote_names}")
+        log.info(f"[reviewer] Running verification votes: {vote_names}")
         vote_results = await asyncio.gather(*vote_coros, return_exceptions=True)
 
         # Build verification round responses
         verification_responses = {}
         for name, result in zip(vote_names, vote_results):
             if isinstance(result, Exception):
-                logger.error(f"[reviewer] {name} verification vote failed: {result}")
+                log.error(f"[reviewer] {name} verification vote failed: {result}")
                 verification_responses[name] = ReviewResponse(
                     llm=name,
                     mode="verification",
@@ -306,7 +307,7 @@ class AutomatedReviewer:
                     reasoning=result["reasoning"],
                     confidence=result["confidence"],
                 )
-                logger.info(f"[reviewer] {name} verification vote: {result['rating']}")
+                log.info(f"[reviewer] {name} verification vote: {result['rating']}")
 
         # Create verification round
         verification_ratings = [r.rating for r in verification_responses.values()]
@@ -329,7 +330,7 @@ class AutomatedReviewer:
 
         final_rating = verification_round.get_majority_rating() or "?"
         is_disputed = verification_outcome != "resolved"
-        logger.info(f"[reviewer] Verification complete: {verification_ratings} -> {final_rating}")
+        log.info(f"[reviewer] Verification complete: {verification_ratings} -> {final_rating}")
         print(f"  [✓] Verification: {verification_ratings} -> {final_rating}")
 
         return final_rating, is_disputed
@@ -378,12 +379,12 @@ class AutomatedReviewer:
             Check review.is_paused to see if review was interrupted for higher priority.
         """
         start_time = time.time()
-        logger.info(f"[reviewer] Starting review for {chunk_id}")
+        log.info(f"[reviewer] Starting review for {chunk_id}")
 
         # Check for existing progress (paused or interrupted review)
         existing_progress = self._load_progress(chunk_id)
         if existing_progress and len(existing_progress.rounds) > 0:
-            logger.info(f"[reviewer] Resuming {chunk_id} from Round {len(existing_progress.rounds)}")
+            log.info(f"[reviewer] Resuming {chunk_id} from Round {len(existing_progress.rounds)}")
             print(f"  [↻] Resuming review from Round {len(existing_progress.rounds)}")
             review = existing_progress
             current_insight = existing_progress.final_insight_text or insight_text
@@ -403,7 +404,7 @@ class AutomatedReviewer:
             # Skip Round 1 if already completed
             if len(review.rounds) >= 1:
                 round1 = review.rounds[0]
-                logger.info(f"[reviewer] Skipping Round 1 (already completed)")
+                log.info(f"[reviewer] Skipping Round 1 (already completed)")
             else:
                 # Round 1: Independent review
                 round1 = await run_round1(
@@ -420,7 +421,7 @@ class AutomatedReviewer:
                 review.add_round(round1)
 
                 pattern = get_rating_pattern(round1)
-                logger.info(f"[reviewer] Round 1 complete: {pattern}")
+                log.info(f"[reviewer] Round 1 complete: {pattern}")
 
                 # Save progress after Round 1 (safe to interrupt after this)
                 self._save_progress(review, 1)
@@ -429,7 +430,7 @@ class AutomatedReviewer:
             if check_priority_switches:
                 should_switch, higher_id = self.should_switch_to_higher_priority(chunk_id, priority)
                 if should_switch:
-                    logger.info(f"[reviewer] Pausing {chunk_id} for higher priority item {higher_id}")
+                    log.info(f"[reviewer] Pausing {chunk_id} for higher priority item {higher_id}")
                     print(f"  [!] Higher priority item found ({higher_id}) - pausing review")
                     review.is_paused = True
                     review.paused_for_id = higher_id
@@ -451,7 +452,7 @@ class AutomatedReviewer:
                 )
 
                 if should_verify:
-                    logger.info(f"[reviewer] Math verification triggered: {verify_reason}")
+                    log.info(f"[reviewer] Math verification triggered: {verify_reason}")
 
                     verification = await self.deepseek.verify_insight(
                         insight=current_insight,
@@ -459,12 +460,12 @@ class AutomatedReviewer:
                     )
                     review.math_verification = verification
 
-                    logger.info(f"[reviewer] DeepSeek verdict: {verification.verdict} "
+                    log.info(f"[reviewer] DeepSeek verdict: {verification.verdict} "
                                f"(confidence: {verification.confidence:.0%})")
 
                     # Check for auto-rejection
                     if verification.should_auto_reject:
-                        logger.info(f"[reviewer] Auto-rejecting: mathematical claim refuted")
+                        log.info(f"[reviewer] Auto-rejecting: mathematical claim refuted")
                         review.rejection_reason = (
                             f"Mathematical claim refuted by DeepSeek:\n"
                             f"{verification.counterexample}"
@@ -488,7 +489,7 @@ class AutomatedReviewer:
                     unanimous=True,
                     disputed=False,
                 )
-                logger.info(f"[reviewer] Abandoned after Round 1 unanimously")
+                log.info(f"[reviewer] Abandoned after Round 1 unanimously")
                 self._save_review(review, start_time)
                 return review
 
@@ -500,7 +501,7 @@ class AutomatedReviewer:
                     unanimous=True,
                     disputed=False,
                 )
-                logger.info(f"[reviewer] Unanimous after Round 1: {final_rating}")
+                log.info(f"[reviewer] Unanimous after Round 1: {final_rating}")
                 self._save_review(review, start_time)
                 return review
 
@@ -508,7 +509,7 @@ class AutomatedReviewer:
             if len(review.rounds) == 1:  # Just completed Round 1
                 mod, mod_source, mod_rationale = _get_modification_consensus(round1)
                 if mod:
-                    logger.info(f"[reviewer] Modification accepted from {mod_source} after Round 1")
+                    log.info(f"[reviewer] Modification accepted from {mod_source} after Round 1")
                     current_insight, current_version, accepted_modification, modification_source = \
                         self._record_modification(review, round1, current_insight, current_version,
                                                   mod, mod_source, mod_rationale, 1)
@@ -516,7 +517,7 @@ class AutomatedReviewer:
             # Skip Round 2 if already completed
             if len(review.rounds) >= 2:
                 round2 = review.rounds[1]
-                logger.info(f"[reviewer] Skipping Round 2 (already completed)")
+                log.info(f"[reviewer] Skipping Round 2 (already completed)")
             else:
                 # Round 2: Deep analysis with all Round 1 responses visible
                 try:
@@ -541,7 +542,7 @@ class AutomatedReviewer:
                 review.mind_changes.extend(mind_changes_r2)
 
                 pattern = get_rating_pattern(round2)
-                logger.info(f"[reviewer] Round 2 (deep analysis): {pattern}")
+                log.info(f"[reviewer] Round 2 (deep analysis): {pattern}")
 
                 # Save progress after Round 2 (safe to interrupt after this)
                 self._save_progress(review, 2)
@@ -550,7 +551,7 @@ class AutomatedReviewer:
                 if check_priority_switches:
                     should_switch, higher_id = self.should_switch_to_higher_priority(chunk_id, priority)
                     if should_switch:
-                        logger.info(f"[reviewer] Pausing {chunk_id} after Round 2 for higher priority item {higher_id}")
+                        log.info(f"[reviewer] Pausing {chunk_id} after Round 2 for higher priority item {higher_id}")
                         print(f"  [!] Higher priority item found ({higher_id}) - pausing review")
                         review.is_paused = True
                         review.paused_for_id = higher_id
@@ -564,7 +565,7 @@ class AutomatedReviewer:
                     unanimous=True,
                     disputed=False,
                 )
-                logger.info(f"[reviewer] Abandoned after Round 2 unanimously")
+                log.info(f"[reviewer] Abandoned after Round 2 unanimously")
                 self._save_review(review, start_time)
                 return review
 
@@ -579,7 +580,7 @@ class AutomatedReviewer:
                 # Store final insight text if modified
                 if current_insight != insight_text:
                     review.final_insight_text = current_insight
-                logger.info(f"[reviewer] Unanimous after Round 2: {final_rating}")
+                log.info(f"[reviewer] Unanimous after Round 2: {final_rating}")
                 self._save_review(review, start_time)
                 return review
 
@@ -587,7 +588,7 @@ class AutomatedReviewer:
             if len(review.rounds) == 2:  # Just completed Round 2
                 mod2, mod2_source, mod2_rationale = _get_modification_consensus(round2)
                 if mod2:
-                    logger.info(f"[reviewer] Modification accepted from {mod2_source} after Round 2")
+                    log.info(f"[reviewer] Modification accepted from {mod2_source} after Round 2")
                     current_insight, current_version, accepted_modification, modification_source = \
                         self._record_modification(review, round2, current_insight, current_version,
                                                   mod2, mod2_source, mod2_rationale, 2)
@@ -597,7 +598,7 @@ class AutomatedReviewer:
                 # Skip Round 3 if already completed
                 if len(review.rounds) >= 3:
                     round3 = review.rounds[2]
-                    logger.info(f"[reviewer] Skipping Round 3 (already completed)")
+                    log.info(f"[reviewer] Skipping Round 3 (already completed)")
                     # Just finalize with existing data
                     final_rating = round3.get_majority_rating() or "?"
                     review.finalize(
@@ -631,7 +632,7 @@ class AutomatedReviewer:
                         review.add_refinement(refinement_record)
                         current_insight = modified_insight
                         current_version = refinement_record.to_version
-                        logger.info(f"[reviewer] Insight modified during deliberation, now v{current_version}")
+                        log.info(f"[reviewer] Insight modified during deliberation, now v{current_version}")
 
                         # Check if we need a verification vote on the modified insight
                         round3_ratings = list(round3.get_ratings().values())
@@ -677,13 +678,13 @@ class AutomatedReviewer:
                 if current_insight != insight_text:
                     review.final_insight_text = current_insight
 
-            logger.info(f"[reviewer] Final rating: {final_rating} "
+            log.info(f"[reviewer] Final rating: {final_rating} "
                        f"(disputed={review.is_disputed}, refined={review.was_refined})")
             self._save_review(review, start_time)
             return review
 
         except Exception as e:
-            logger.error(f"[reviewer] Review failed: {e}")
+            log.error(f"[reviewer] Review failed: {e}")
             review.finalize(rating="?", unanimous=False, disputed=True)
             self._save_review(review, start_time)
             raise
@@ -692,13 +693,13 @@ class AutomatedReviewer:
         """Save review to disk and update duration."""
         review.review_duration_seconds = time.time() - start_time
         review.save(self.data_dir)
-        logger.info(f"[reviewer] ✓ SAVED review for {review.chunk_id} ({review.review_duration_seconds:.1f}s)")
+        log.info(f"[reviewer] ✓ SAVED review for {review.chunk_id} ({review.review_duration_seconds:.1f}s)")
 
         # Clean up progress file if it exists
         progress_path = self.data_dir / "reviews" / "in_progress" / f"{review.chunk_id}.json"
         if progress_path.exists():
             progress_path.unlink()
-            logger.info(f"[reviewer] Cleaned up progress file for {review.chunk_id}")
+            log.info(f"[reviewer] Cleaned up progress file for {review.chunk_id}")
 
     def _save_progress(self, review: ChunkReview, round_num: int):
         """Save intermediate progress after a round completes (safe to interrupt after this)."""
@@ -711,7 +712,7 @@ class AutomatedReviewer:
         with open(progress_path, "w", encoding="utf-8") as f:
             json.dump(review.to_dict(), f, indent=2, ensure_ascii=False)
 
-        logger.info(f"[reviewer] ✓ PROGRESS SAVED after Round {round_num} - safe to interrupt")
+        log.info(f"[reviewer] ✓ PROGRESS SAVED after Round {round_num} - safe to interrupt")
         # Also print to console so user knows
         print(f"  [✓] Round {round_num} complete - progress saved (safe to interrupt)")
 
@@ -757,7 +758,7 @@ class AutomatedReviewer:
                         rounds = self.get_saved_progress(insight.id)
                         candidates.append((insight.id, insight.priority, rounds))
                     except Exception as e:
-                        logger.warning(f"Could not load {json_file}: {e}")
+                        log.warning(f"Could not load {json_file}: {e}")
 
         # Check in-progress reviews that might not have pending insight files
         # (e.g., if insight was moved but review is partial)
@@ -780,7 +781,7 @@ class AutomatedReviewer:
                                     break
                             candidates.append((chunk_id, priority, len(review.rounds)))
                     except Exception as e:
-                        logger.warning(f"Could not load progress {json_file}: {e}")
+                        log.warning(f"Could not load progress {json_file}: {e}")
 
         if not candidates:
             return (None, 0, 0)
@@ -868,7 +869,7 @@ class AutomatedReviewer:
                 )
                 results.append(review)
             except Exception as e:
-                logger.error(f"[reviewer] Failed to review {insight['id']}: {e}")
+                log.error(f"[reviewer] Failed to review {insight['id']}: {e}")
                 # Create a failed review
                 review = ChunkReview(chunk_id=insight["id"])
                 review.finalize(rating="?", unanimous=False, disputed=True)

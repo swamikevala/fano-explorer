@@ -28,6 +28,10 @@ if sys.platform == "win32":
 from pool.src.api import create_app, load_config
 import uvicorn
 
+from shared.logging import get_logger
+
+log = get_logger("pool", "run_pool")
+
 
 class HealthCheckFilter(logging.Filter):
     """Filter out health check and status endpoint logs."""
@@ -51,7 +55,7 @@ def handle_exception(loop, context):
             return
     # Log other exceptions normally
     msg = context.get("message", "Unhandled exception in event loop")
-    logging.error(f"Asyncio error: {msg}")
+    log.error("asyncio.error", message=msg)
 
 
 if __name__ == "__main__":

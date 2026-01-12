@@ -9,14 +9,15 @@ Handles interaction with Gemini web interface, including:
 """
 
 import asyncio
-import logging
 from datetime import datetime
 from typing import Optional
+
+from shared.logging import get_logger
 
 from .base import BaseLLMInterface, rate_tracker
 from .model_selector import deep_mode_tracker
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "browser.gemini")
 
 
 class GeminiInterface(BaseLLMInterface):
@@ -135,15 +136,15 @@ class GeminiInterface(BaseLLMInterface):
         """
         # CRITICAL: Never try to enable while waiting for a response
         if self._response_in_progress:
-            logger.warning("[gemini] enable_deep_think blocked: response in progress!")
+            log.warning("[gemini] enable_deep_think blocked: response in progress!")
             return self.deep_think_enabled
 
         # Prevent re-enabling if already enabled (avoids double "new chat" clicks)
         if self.deep_think_enabled:
-            logger.info("[gemini] Deep Think already enabled, skipping")
+            log.info("[gemini] Deep Think already enabled, skipping")
             return True
 
-        logger.info("[gemini] Enabling Deep Think mode...")
+        log.info("[gemini] Enabling Deep Think mode...")
 
         try:
             # Step 1: Click the "Tools" button or model selector to open the menu
@@ -165,7 +166,7 @@ class GeminiInterface(BaseLLMInterface):
                         element_texts.append(f"'{text}' (aria: '{aria}')")
 
                     if text.lower() == 'tools' or 'tools' in aria.lower():
-                        logger.info(f"[gemini] Clicking Tools: '{text}' (aria: '{aria}')")
+                        log.info(f"[gemini] Clicking Tools: '{text}' (aria: '{aria}')")
                         await elem.click()
                         await asyncio.sleep(1.0)
                         menu_opened = True
@@ -186,7 +187,7 @@ class GeminiInterface(BaseLLMInterface):
 
                         for pattern in model_patterns:
                             if pattern in text or pattern in aria:
-                                logger.info(f"[gemini] Clicking model selector: '{text}' (aria: '{aria}')")
+                                log.info(f"[gemini] Clicking model selector: '{text}' (aria: '{aria}')")
                                 await elem.click()
                                 await asyncio.sleep(1.0)
                                 menu_opened = True
@@ -197,7 +198,7 @@ class GeminiInterface(BaseLLMInterface):
                         continue
 
             if not menu_opened:
-                logger.warning(f"[gemini] Tools/model selector not found. Visible elements: {element_texts[:15]}")
+                log.warning(f"[gemini] Tools/model selector not found. Visible elements: {element_texts[:15]}")
                 return False
 
             # Step 2: Click Deep Think option (NOT Deep Research - that's different)
@@ -251,10 +252,10 @@ class GeminiInterface(BaseLLMInterface):
             }""")
 
             if deep_think_clicked:
-                logger.info(f"[gemini] Deep Think clicked via JavaScript")
+                log.info(f"[gemini] Deep Think clicked via JavaScript")
             else:
                 # Fallback: try to find by aria-label or specific attributes
-                logger.info(f"[gemini] JS click failed, trying selector fallback...")
+                log.info(f"[gemini] JS click failed, trying selector fallback...")
 
                 # Search all visible elements for Deep Think options
                 all_elements = await self.page.query_selector_all("[role='menuitem'], [role='option'], mat-option, button.menu-item")
@@ -280,7 +281,7 @@ class GeminiInterface(BaseLLMInterface):
 
                         for pattern in deep_think_patterns:
                             if pattern in text_lower:
-                                logger.info(f"[gemini] Found Deep Think option: '{text}'")
+                                log.info(f"[gemini] Found Deep Think option: '{text}'")
                                 await elem.click(force=True)
                                 deep_think_clicked = True
                                 break
@@ -290,12 +291,12 @@ class GeminiInterface(BaseLLMInterface):
                         continue
 
             if not deep_think_clicked:
-                logger.warning(f"[gemini] Deep Think option not found. Menu items: {menu_texts[:20] if 'menu_texts' in dir() else 'N/A'}")
+                log.warning(f"[gemini] Deep Think option not found. Menu items: {menu_texts[:20] if 'menu_texts' in dir() else 'N/A'}")
                 # Take screenshot for debugging
                 try:
-                    screenshot_path = self.chat_logger.log_dir / "deep_think_menu_debug.png"
+                    screenshot_path = self.chat_log.log_dir / "deep_think_menu_debug.png"
                     await self.page.screenshot(path=str(screenshot_path))
-                    logger.info(f"[gemini] Menu screenshot saved to: {screenshot_path}")
+                    log.info(f"[gemini] Menu screenshot saved to: {screenshot_path}")
                 except Exception:
                     pass
                 return False
@@ -303,29 +304,29 @@ class GeminiInterface(BaseLLMInterface):
             # Step 3: Handle confirmation dialog ONCE
             # Mark that we're about to handle confirmation to prevent double-handling
             if not self._deep_think_confirmation_done:
-                logger.info("[gemini] Waiting for confirmation dialog...")
+                log.info("[gemini] Waiting for confirmation dialog...")
                 await asyncio.sleep(1)
                 await self._handle_mode_change_confirmation()
                 self._deep_think_confirmation_done = True
-                logger.info("[gemini] Confirmation dialog handled")
+                log.info("[gemini] Confirmation dialog handled")
 
             # Step 4: Wait for new chat to fully load
-            logger.info("[gemini] Waiting for new chat to load...")
+            log.info("[gemini] Waiting for new chat to load...")
             await asyncio.sleep(3)  # Increased from 2 to 3 seconds
 
             # Step 5: Verify Deep Think is actually enabled by checking page state
             verified = await self._verify_deep_think_active()
             if verified:
                 self.deep_think_enabled = True
-                logger.info("[gemini] Deep Think enabled and VERIFIED")
+                log.info("[gemini] Deep Think enabled and VERIFIED")
                 return True
             else:
-                logger.warning("[gemini] Deep Think clicked but NOT verified as active!")
+                log.warning("[gemini] Deep Think clicked but NOT verified as active!")
                 # Try to take a screenshot for debugging
                 try:
-                    screenshot_path = self.chat_logger.log_dir / "deep_think_debug.png"
+                    screenshot_path = self.chat_log.log_dir / "deep_think_debug.png"
                     await self.page.screenshot(path=str(screenshot_path))
-                    logger.info(f"[gemini] Debug screenshot saved to: {screenshot_path}")
+                    log.info(f"[gemini] Debug screenshot saved to: {screenshot_path}")
                 except Exception:
                     pass
                 return False
@@ -334,7 +335,7 @@ class GeminiInterface(BaseLLMInterface):
             # Propagate quota exhaustion - this is a critical error
             raise
         except Exception as e:
-            logger.error(f"[gemini] Could not enable Deep Think: {e}")
+            log.error(f"[gemini] Could not enable Deep Think: {e}")
             return False
 
     async def _handle_mode_change_confirmation(self):
@@ -356,7 +357,7 @@ class GeminiInterface(BaseLLMInterface):
                 dialog = await self.page.query_selector(selector)
                 if dialog and await dialog.is_visible():
                     dialog_found = True
-                    logger.info(f"[gemini] Found confirmation dialog: {selector}")
+                    log.info(f"[gemini] Found confirmation dialog: {selector}")
                     break
             except Exception:
                 continue
@@ -376,7 +377,7 @@ class GeminiInterface(BaseLLMInterface):
                 text = (await btn.inner_text() or "").strip().lower()
                 for pattern in confirm_patterns:
                     if pattern in text:
-                        logger.info(f"[gemini] Clicking confirmation button: '{text}'")
+                        log.info(f"[gemini] Clicking confirmation button: '{text}'")
                         await btn.click()
                         await asyncio.sleep(1)
                         return
@@ -384,7 +385,7 @@ class GeminiInterface(BaseLLMInterface):
                 continue
 
         if dialog_found:
-            logger.warning("[gemini] Dialog found but couldn't find confirm button")
+            log.warning("[gemini] Dialog found but couldn't find confirm button")
 
     async def _verify_deep_think_active(self) -> bool:
         """
@@ -410,7 +411,7 @@ class GeminiInterface(BaseLLMInterface):
                 if pattern in page_text_lower:
                     # Try to extract the resume time
                     resume_time = self._extract_resume_time(page_text)
-                    logger.error(f"[gemini] Deep Think quota exhausted! Resume time: {resume_time}")
+                    log.error(f"[gemini] Deep Think quota exhausted! Resume time: {resume_time}")
                     raise GeminiQuotaExhausted(
                         f"Gemini Deep Think quota exhausted until {resume_time}",
                         resume_time=resume_time
@@ -425,7 +426,7 @@ class GeminiInterface(BaseLLMInterface):
 
             for indicator in deep_think_indicators:
                 if indicator in page_text_lower:
-                    logger.info(f"[gemini] Found Deep Think indicator: '{indicator}'")
+                    log.info(f"[gemini] Found Deep Think indicator: '{indicator}'")
                     return True
 
             # Also check for model selector showing Deep Think
@@ -434,20 +435,20 @@ class GeminiInterface(BaseLLMInterface):
                 try:
                     text = await selector.inner_text()
                     if text and "deep" in text.lower():
-                        logger.info(f"[gemini] Found Deep Think in model selector: '{text}'")
+                        log.info(f"[gemini] Found Deep Think in model selector: '{text}'")
                         return True
                 except Exception:
                     continue
 
             # Log what we see on the page for debugging
-            logger.warning(f"[gemini] Page text sample (first 500 chars): {page_text[:500]}")
+            log.warning(f"[gemini] Page text sample (first 500 chars): {page_text[:500]}")
             return False
 
         except GeminiQuotaExhausted:
             # Re-raise quota exhaustion - don't catch it here
             raise
         except Exception as e:
-            logger.error(f"[gemini] Error verifying Deep Think: {e}")
+            log.error(f"[gemini] Error verifying Deep Think: {e}")
             return False
 
     def _extract_resume_time(self, page_text: str) -> str:
@@ -472,11 +473,11 @@ class GeminiInterface(BaseLLMInterface):
         """Start a new conversation."""
         # CRITICAL: Never navigate away while waiting for a response
         if self._response_in_progress:
-            logger.warning("[gemini] start_new_chat blocked: response in progress!")
+            log.warning("[gemini] start_new_chat blocked: response in progress!")
             return
 
         try:
-            logger.info("[gemini] Starting new chat, resetting Deep Think state")
+            log.info("[gemini] Starting new chat, resetting Deep Think state")
 
             # Reset Deep Think state - new chat starts in standard mode
             self.deep_think_enabled = False
@@ -486,7 +487,7 @@ class GeminiInterface(BaseLLMInterface):
             await self._navigate_with_firewall_check("https://gemini.google.com/app")
 
             # Start a new logging session
-            session_id = self.chat_logger.start_session()
+            session_id = self.chat_log.start_session()
             print(f"[gemini] Started new chat (session: {session_id})")
 
         except Exception as e:
@@ -529,7 +530,7 @@ class GeminiInterface(BaseLLMInterface):
 
         # Log the mode we're using
         mode_str = "Deep Think" if self.deep_think_enabled else "standard"
-        logger.info(f"[gemini] Sending message in {mode_str} mode ({len(message)} chars)")
+        log.info(f"[gemini] Sending message in {mode_str} mode ({len(message)} chars)")
 
         # Get retry settings for Deep Think overload
         retry_config = self.config.get("deep_think_retry", {})
@@ -546,7 +547,7 @@ class GeminiInterface(BaseLLMInterface):
                 # Check for Deep Think overload (temporary, retryable)
                 if self.deep_think_enabled and self._check_deep_think_overload(response):
                     if retry_enabled and attempt <= max_retries:
-                        logger.warning(
+                        log.warning(
                             f"[gemini] Deep Think overloaded (attempt {attempt}/{max_retries}). "
                             f"Waiting {retry_wait}s before retry..."
                         )
@@ -559,7 +560,7 @@ class GeminiInterface(BaseLLMInterface):
                         await self.start_new_chat()
                         continue
                     else:
-                        logger.warning("[gemini] Deep Think overloaded, max retries reached")
+                        log.warning("[gemini] Deep Think overloaded, max retries reached")
                         raise RateLimitError("Deep Think overloaded after max retries")
 
                 return response
@@ -568,7 +569,7 @@ class GeminiInterface(BaseLLMInterface):
                 raise
             except Exception as e:
                 if attempt <= max_retries and "overload" in str(e).lower():
-                    logger.warning(f"[gemini] Retrying after error: {e}")
+                    log.warning(f"[gemini] Retrying after error: {e}")
                     await asyncio.sleep(retry_wait)
                     await self.start_new_chat()
                     continue
@@ -638,7 +639,7 @@ class GeminiInterface(BaseLLMInterface):
 
             # CRITICAL: Set guard to prevent any concurrent operations during response wait
             self._response_in_progress = True
-            logger.info(f"[gemini] Response guard ON - waiting for response...")
+            log.info(f"[gemini] Response guard ON - waiting for response...")
 
             try:
                 # Wait for response
@@ -646,7 +647,7 @@ class GeminiInterface(BaseLLMInterface):
             finally:
                 # Always clear the guard, even on error
                 self._response_in_progress = False
-                logger.info(f"[gemini] Response guard OFF")
+                log.info(f"[gemini] Response guard OFF")
 
             # Check for rate limiting
             if self._check_rate_limit(response):
@@ -654,7 +655,7 @@ class GeminiInterface(BaseLLMInterface):
                 raise RateLimitError("Gemini rate limit detected")
 
             # Log the exchange locally
-            self.chat_logger.log_exchange(message, response)
+            self.chat_log.log_exchange(message, response)
 
             # Try to rename the chat with datetime (best effort)
             await self._try_rename_chat()
@@ -674,7 +675,7 @@ class GeminiInterface(BaseLLMInterface):
             timeout = self.config.get("response_timeout", 3600)  # Deep Think can take very long
 
         mode_str = "Deep Think" if self.deep_think_enabled else "standard"
-        logger.info(f"[gemini] Waiting for response in {mode_str} mode (timeout: {timeout}s)...")
+        log.info(f"[gemini] Waiting for response in {mode_str} mode (timeout: {timeout}s)...")
 
         start_time = datetime.now()
         last_response = ""
@@ -717,7 +718,7 @@ class GeminiInterface(BaseLLMInterface):
         # because thinking output stabilizes before the actual response
         initial_wait = 30 if self.deep_think_enabled else 5
 
-        logger.info(f"[gemini] Initial wait: {initial_wait}s before stability checks")
+        log.info(f"[gemini] Initial wait: {initial_wait}s before stability checks")
         await asyncio.sleep(initial_wait)
 
         while (datetime.now() - start_time).seconds < timeout:
@@ -725,7 +726,7 @@ class GeminiInterface(BaseLLMInterface):
 
             # Log progress every 30 seconds
             if (datetime.now() - last_log_time).seconds >= 30:
-                logger.info(f"[gemini] Still waiting... ({elapsed}s elapsed, stable_count={stable_count}, response_started={response_started})")
+                log.info(f"[gemini] Still waiting... ({elapsed}s elapsed, stable_count={stable_count}, response_started={response_started})")
                 last_log_time = datetime.now()
 
             # First, check if Gemini is still actively processing
@@ -738,7 +739,7 @@ class GeminiInterface(BaseLLMInterface):
                         if is_visible:
                             is_still_processing = True
                             if elapsed > 60:  # Only log after 1 minute to reduce noise
-                                logger.debug(f"[gemini] Still processing (indicator: {selector})")
+                                log.debug(f"[gemini] Still processing (indicator: {selector})")
                             break
                 except Exception:
                     continue
@@ -784,14 +785,14 @@ class GeminiInterface(BaseLLMInterface):
 
                         if not final_check_processing:
                             elapsed = (datetime.now() - start_time).seconds
-                            logger.info(f"[gemini] Response complete ({elapsed}s, {len(current_response)} chars)")
+                            log.info(f"[gemini] Response complete ({elapsed}s, {len(current_response)} chars)")
                             return current_response.strip()
                         else:
-                            logger.info(f"[gemini] Stable but still processing, continuing to wait...")
+                            log.info(f"[gemini] Stable but still processing, continuing to wait...")
                             stable_count = required_stable // 2  # Partial reset
                 else:
                     if last_response and current_response != last_response:
-                        logger.debug(f"[gemini] Response changed ({len(last_response)} -> {len(current_response)} chars)")
+                        log.debug(f"[gemini] Response changed ({len(last_response)} -> {len(current_response)} chars)")
                     stable_count = 0
                     last_response = current_response
 
@@ -799,7 +800,7 @@ class GeminiInterface(BaseLLMInterface):
 
         if last_response:
             elapsed = (datetime.now() - start_time).seconds
-            logger.warning(f"[gemini] Timeout reached after {elapsed}s, returning partial response ({len(last_response)} chars)")
+            log.warning(f"[gemini] Timeout reached after {elapsed}s, returning partial response ({len(last_response)} chars)")
             return last_response.strip()
         raise TimeoutError("Gemini response timeout")
     
@@ -823,7 +824,7 @@ class GeminiInterface(BaseLLMInterface):
 
     async def _try_rename_chat(self):
         """Try to rename the current chat with session datetime (best effort)."""
-        session_id = self.chat_logger.get_session_id()
+        session_id = self.chat_log.get_session_id()
         if not session_id:
             return
 
@@ -895,13 +896,13 @@ class GeminiInterface(BaseLLMInterface):
                 current_url = self.page.url
                 # Gemini conversation URLs have /app/ followed by a UUID
                 if current_url != base_url and current_url.startswith(base_url) and len(current_url) > len(base_url) + 1:
-                    logger.info(f"[gemini] URL changed to conversation URL: {current_url}")
+                    log.info(f"[gemini] URL changed to conversation URL: {current_url}")
                     self._notify_url_change(current_url)
                     return
             except Exception as e:
-                logger.debug(f"[gemini] URL monitor error: {e}")
+                log.debug(f"[gemini] URL monitor error: {e}")
             await asyncio.sleep(1)
-        logger.warning("[gemini] URL monitor: never saw URL change to conversation URL")
+        log.warning("[gemini] URL monitor: never saw URL change to conversation URL")
 
     async def is_generating(self) -> bool:
         """Check if Gemini is currently generating a response."""
@@ -942,7 +943,7 @@ class GeminiInterface(BaseLLMInterface):
         """
         # If still generating, return None
         if await self.is_generating():
-            logger.info("[gemini] try_get_response: still generating")
+            log.info("[gemini] try_get_response: still generating")
             return None
 
         # Selectors for model responses
@@ -960,12 +961,12 @@ class GeminiInterface(BaseLLMInterface):
                     last_msg = messages[-1]
                     response = await last_msg.inner_text()
                     if response and len(response) > 10:
-                        logger.info(f"[gemini] try_get_response: found response ({len(response)} chars)")
+                        log.info(f"[gemini] try_get_response: found response ({len(response)} chars)")
                         return response.strip()
             except Exception:
                 continue
 
-        logger.info("[gemini] try_get_response: no response found")
+        log.info("[gemini] try_get_response: no response found")
         return None
 
 

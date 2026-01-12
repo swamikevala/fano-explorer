@@ -6,15 +6,16 @@ If unanimous, we're done. Otherwise proceed to Round 2.
 """
 
 import asyncio
-import logging
 from datetime import datetime
 from typing import Optional
+
+from shared.logging import get_logger
 
 from .models import ReviewResponse, ReviewRound
 from .prompts import build_round1_prompt, parse_round1_response
 from .claude_api import ClaudeReviewer
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "review_panel.round1")
 
 
 async def run_round1(
@@ -45,7 +46,7 @@ async def run_round1(
     Returns:
         ReviewRound with all responses
     """
-    logger.info("[round1] Starting independent review")
+    log.info("[round1] Starting independent review")
 
     # Build the prompt
     prompt = build_round1_prompt(
@@ -63,19 +64,19 @@ async def run_round1(
     if gemini_browser:
         tasks.append(("gemini", _review_with_gemini(gemini_browser, prompt)))
     else:
-        logger.warning("[round1] Gemini browser not available")
+        log.warning("[round1] Gemini browser not available")
 
     # ChatGPT review
     if chatgpt_browser:
         tasks.append(("chatgpt", _review_with_chatgpt(chatgpt_browser, prompt)))
     else:
-        logger.warning("[round1] ChatGPT browser not available")
+        log.warning("[round1] ChatGPT browser not available")
 
     # Claude review
     if claude_reviewer and claude_reviewer.is_available():
         tasks.append(("claude", _review_with_claude(claude_reviewer, prompt)))
     else:
-        logger.warning("[round1] Claude API not available")
+        log.warning("[round1] Claude API not available")
 
     if not tasks:
         raise RuntimeError("No review models available for Round 1")
@@ -84,14 +85,14 @@ async def run_round1(
     task_names = [t[0] for t in tasks]
     task_coros = [t[1] for t in tasks]
 
-    logger.info(f"[round1] Running parallel reviews: {task_names}")
+    log.info(f"[round1] Running parallel reviews: {task_names}")
     results = await asyncio.gather(*task_coros, return_exceptions=True)
 
     # Collect responses
     responses = {}
     for name, result in zip(task_names, results):
         if isinstance(result, Exception):
-            logger.error(f"[round1] {name} failed: {result}")
+            log.error(f"[round1] {name} failed: {result}")
             # Create a failure response
             responses[name] = ReviewResponse(
                 llm=name,
@@ -114,20 +115,20 @@ async def run_round1(
     abandon_count = ratings.count("ABANDON")
     if abandon_count == len(ratings) and abandon_count >= 2:
         outcome = "abandoned"
-        logger.info(f"[round1] ABANDONED unanimously ({abandon_count} votes)")
+        log.info(f"[round1] ABANDONED unanimously ({abandon_count} votes)")
     elif len(unique_ratings) == 1:
         outcome = "unanimous"
-        logger.info(f"[round1] Unanimous: {ratings[0]}")
+        log.info(f"[round1] Unanimous: {ratings[0]}")
     else:
         outcome = "split"
-        logger.info(f"[round1] Split: {ratings}")
+        log.info(f"[round1] Split: {ratings}")
 
     # Log any modifications proposed
     modifications = [(name, r.proposed_modification) for name, r in responses.items()
                      if r.proposed_modification]
     if modifications:
         for name, mod in modifications:
-            logger.info(f"[round1] {name} proposed modification: {mod[:100]}...")
+            log.info(f"[round1] {name} proposed modification: {mod[:100]}...")
 
     return ReviewRound(
         round_number=1,
@@ -156,7 +157,7 @@ def _build_response(llm: str, mode: str, parsed: dict) -> ReviewResponse:
 
 async def _review_with_gemini(gemini_browser, prompt: str) -> ReviewResponse:
     """Get review from Gemini using browser automation."""
-    logger.info("[round1] Sending to Gemini (standard mode)")
+    log.info("[round1] Sending to Gemini (standard mode)")
 
     try:
         # Start fresh chat to reset any Deep Think state and clear old content
@@ -171,13 +172,13 @@ async def _review_with_gemini(gemini_browser, prompt: str) -> ReviewResponse:
         return _build_response("gemini", "standard", parsed)
 
     except Exception as e:
-        logger.error(f"[round1] Gemini error: {e}")
+        log.error(f"[round1] Gemini error: {e}")
         raise
 
 
 async def _review_with_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
     """Get review from ChatGPT using browser automation."""
-    logger.info("[round1] Sending to ChatGPT (Thinking mode)")
+    log.info("[round1] Sending to ChatGPT (Thinking mode)")
 
     try:
         # Start fresh chat to clear old content
@@ -192,13 +193,13 @@ async def _review_with_chatgpt(chatgpt_browser, prompt: str) -> ReviewResponse:
         return _build_response("chatgpt", "thinking", parsed)
 
     except Exception as e:
-        logger.error(f"[round1] ChatGPT error: {e}")
+        log.error(f"[round1] ChatGPT error: {e}")
         raise
 
 
 async def _review_with_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> ReviewResponse:
     """Get review from Claude using API."""
-    logger.info("[round1] Sending to Claude (standard mode)")
+    log.info("[round1] Sending to Claude (standard mode)")
 
     try:
         # Send the prompt (no extended thinking for Round 1)
@@ -213,5 +214,5 @@ async def _review_with_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> R
         return _build_response("claude", "standard", parsed)
 
     except Exception as e:
-        logger.error(f"[round1] Claude error: {e}")
+        log.error(f"[round1] Claude error: {e}")
         raise

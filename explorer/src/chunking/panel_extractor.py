@@ -13,7 +13,6 @@ Flow:
 """
 
 import asyncio
-import logging
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -27,10 +26,12 @@ from .prompts import (
 )
 from .dependencies import resolve_dependencies
 
+from shared.logging import get_logger
+
 if TYPE_CHECKING:
     from review_panel.claude_api import ClaudeReviewer
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "chunking.panel_extractor")
 
 
 class PanelExtractor:
@@ -77,10 +78,10 @@ class PanelExtractor:
             List of extracted AtomicInsight objects
         """
         if thread.chunks_extracted:
-            logger.info(f"[panel-extractor] Thread {thread.id} already extracted")
+            log.info(f"[panel-extractor] Thread {thread.id} already extracted")
             return []
 
-        logger.info(f"[panel-extractor] Starting panel extraction for thread {thread.id}")
+        log.info(f"[panel-extractor] Starting panel extraction for thread {thread.id}")
 
         # Build context
         thread_context = thread.get_context_for_prompt(max_exchanges=20)
@@ -99,7 +100,7 @@ class PanelExtractor:
         )
 
         # Phase 1: Parallel extraction from all 3 LLMs
-        logger.info("[panel-extractor] Phase 1: Parallel extraction from all LLMs")
+        log.info("[panel-extractor] Phase 1: Parallel extraction from all LLMs")
 
         gemini_response = ""
         chatgpt_response = ""
@@ -116,7 +117,7 @@ class PanelExtractor:
             tasks.append(("claude", self._extract_from_claude(claude_reviewer, prompt)))
 
         if not tasks:
-            logger.error("[panel-extractor] No LLMs available for extraction")
+            log.error("[panel-extractor] No LLMs available for extraction")
             return []
 
         # Run in parallel
@@ -129,27 +130,27 @@ class PanelExtractor:
         for i, (llm_name, _) in enumerate(tasks):
             result = results[i]
             if isinstance(result, Exception):
-                logger.warning(f"[panel-extractor] {llm_name} failed: {result}")
+                log.warning(f"[panel-extractor] {llm_name} failed: {result}")
                 continue
 
             if llm_name == "gemini":
                 gemini_response = result
-                logger.info(f"[panel-extractor] Gemini proposed {len(parse_panel_extraction_response(result))} insights")
+                log.info(f"[panel-extractor] Gemini proposed {len(parse_panel_extraction_response(result))} insights")
             elif llm_name == "chatgpt":
                 chatgpt_response = result
-                logger.info(f"[panel-extractor] ChatGPT proposed {len(parse_panel_extraction_response(result))} insights")
+                log.info(f"[panel-extractor] ChatGPT proposed {len(parse_panel_extraction_response(result))} insights")
             elif llm_name == "claude":
                 claude_response = result
-                logger.info(f"[panel-extractor] Claude proposed {len(parse_panel_extraction_response(result))} insights")
+                log.info(f"[panel-extractor] Claude proposed {len(parse_panel_extraction_response(result))} insights")
 
         # Check we have at least one response
         if not any([gemini_response, chatgpt_response, claude_response]):
-            logger.error("[panel-extractor] All LLMs failed to respond")
+            log.error("[panel-extractor] All LLMs failed to respond")
             thread.extraction_note = "Panel extraction failed: no LLM responses"
             return []
 
         # Phase 2: Consolidation by Claude
-        logger.info("[panel-extractor] Phase 2: Consolidation")
+        log.info("[panel-extractor] Phase 2: Consolidation")
 
         consolidation_prompt = build_consolidation_prompt(
             gemini_proposals=gemini_response or "(no response)",
@@ -174,13 +175,13 @@ class PanelExtractor:
                     use_thinking_mode=True
                 )
             else:
-                logger.error("[panel-extractor] No LLM available for consolidation")
+                log.error("[panel-extractor] No LLM available for consolidation")
                 return []
 
-            logger.info(f"[panel-extractor] Got consolidation response ({len(consolidated)} chars)")
+            log.info(f"[panel-extractor] Got consolidation response ({len(consolidated)} chars)")
 
         except Exception as e:
-            logger.error(f"[panel-extractor] Consolidation failed: {e}")
+            log.error(f"[panel-extractor] Consolidation failed: {e}")
             thread.extraction_note = f"Consolidation failed: {e}"
             return []
 
@@ -188,12 +189,12 @@ class PanelExtractor:
         parsed_insights = parse_consolidation_response(consolidated)
 
         if not parsed_insights:
-            logger.info(f"[panel-extractor] No insights after consolidation")
+            log.info(f"[panel-extractor] No insights after consolidation")
             thread.chunks_extracted = True
             thread.extraction_note = "Panel extraction yielded no insights"
             return []
 
-        logger.info(f"[panel-extractor] Consolidated to {len(parsed_insights)} insights")
+        log.info(f"[panel-extractor] Consolidated to {len(parsed_insights)} insights")
 
         # Create AtomicInsight objects
         insights = []
@@ -226,13 +227,13 @@ class PanelExtractor:
         # Save insights
         for insight in insights:
             insight.save(self.data_dir)
-            logger.info(f"[panel-extractor] Saved: {insight.id}: {insight.insight[:60]}...")
+            log.info(f"[panel-extractor] Saved: {insight.id}: {insight.insight[:60]}...")
 
         # Mark thread as extracted
         thread.chunks_extracted = True
         thread.extraction_note = f"Panel extracted {len(insights)} insights"
 
-        logger.info(f"[panel-extractor] Complete: {len(insights)} insights from thread {thread.id}")
+        log.info(f"[panel-extractor] Complete: {len(insights)} insights from thread {thread.id}")
 
         return insights
 
@@ -243,7 +244,7 @@ class PanelExtractor:
             response = await gemini.send_message(prompt, use_deep_think=False)
             return response
         except Exception as e:
-            logger.warning(f"[panel-extractor] Gemini extraction failed: {e}")
+            log.warning(f"[panel-extractor] Gemini extraction failed: {e}")
             raise
 
     async def _extract_from_chatgpt(self, chatgpt, prompt: str) -> str:
@@ -257,7 +258,7 @@ class PanelExtractor:
             )
             return response
         except Exception as e:
-            logger.warning(f"[panel-extractor] ChatGPT extraction failed: {e}")
+            log.warning(f"[panel-extractor] ChatGPT extraction failed: {e}")
             raise
 
     async def _extract_from_claude(self, claude_reviewer, prompt: str) -> str:
@@ -271,7 +272,7 @@ class PanelExtractor:
             )
             return response
         except Exception as e:
-            logger.warning(f"[panel-extractor] Claude extraction failed: {e}")
+            log.warning(f"[panel-extractor] Claude extraction failed: {e}")
             raise
 
 

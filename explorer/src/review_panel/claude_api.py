@@ -5,13 +5,14 @@ Provides Claude access via the Anthropic API for review panel operations.
 """
 
 import asyncio
-import logging
 import os
 from typing import Optional
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-logger = logging.getLogger(__name__)
+from shared.logging import get_logger
+
+log = get_logger("explorer", "review_panel.claude_api")
 
 
 class ClaudeReviewer:
@@ -58,7 +59,7 @@ class ClaudeReviewer:
             disable_ssl = os.environ.get("ANTHROPIC_DISABLE_SSL_VERIFY", "").lower() in ("1", "true", "yes")
 
             if disable_ssl:
-                logger.warning("[claude] SSL verification DISABLED - use only for corporate proxy issues")
+                log.warning("[claude] SSL verification DISABLED - use only for corporate proxy issues")
                 # Create custom httpx client without SSL verification
                 http_client = httpx.Client(verify=False)
                 self.client = anthropic.Anthropic(api_key=self.api_key, http_client=http_client)
@@ -66,7 +67,7 @@ class ClaudeReviewer:
                 self.client = anthropic.Anthropic(api_key=self.api_key)
 
             self._initialized = True
-            logger.info(f"[claude] Initialized with model {self.model}")
+            log.info(f"[claude] Initialized with model {self.model}")
         except ImportError:
             raise ImportError(
                 "anthropic package not installed. Run: pip install anthropic"
@@ -119,7 +120,7 @@ class ClaudeReviewer:
         """
         self._ensure_client()
 
-        logger.info(f"[claude] Sending message ({len(prompt)} chars, extended_thinking={extended_thinking})")
+        log.info(f"[claude] Sending message ({len(prompt)} chars, extended_thinking={extended_thinking})")
 
         # Retry logic for connection errors
         max_retries = 3
@@ -131,7 +132,7 @@ class ClaudeReviewer:
                 if attempt > 0:
                     import anthropic
                     self.client = anthropic.Anthropic(api_key=self.api_key)
-                    logger.info(f"[claude] Recreated client for retry attempt {attempt + 1}")
+                    log.info(f"[claude] Recreated client for retry attempt {attempt + 1}")
 
                 if extended_thinking:
                     # Use streaming for extended thinking (required for long operations)
@@ -151,7 +152,7 @@ class ClaudeReviewer:
                         if hasattr(block, "text"):
                             text_content += block.text
 
-                logger.info(f"[claude] Got response ({len(text_content)} chars)")
+                log.info(f"[claude] Got response ({len(text_content)} chars)")
                 return text_content
 
             except Exception as e:
@@ -161,15 +162,15 @@ class ClaudeReviewer:
                 # Only retry on connection errors
                 if "connection" in error_str or "timeout" in error_str:
                     wait_time = 2 ** attempt  # 1, 2, 4 seconds
-                    logger.warning(f"[claude] Connection error (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
+                    log.warning(f"[claude] Connection error (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
                     await asyncio.sleep(wait_time)
                 else:
                     # Non-connection error, don't retry
-                    logger.error(f"[claude] Error: {type(e).__name__}: {e}")
+                    log.error(f"[claude] Error: {type(e).__name__}: {e}")
                     raise
 
         # All retries exhausted
-        logger.error(f"[claude] All {max_retries} attempts failed: {last_error}")
+        log.error(f"[claude] All {max_retries} attempts failed: {last_error}")
         raise last_error
 
     async def review(
@@ -195,10 +196,10 @@ class ClaudeReviewer:
             self._ensure_client()
             return True
         except (ValueError, ImportError) as e:
-            logger.warning(f"[claude] is_available check failed: {e}")
+            log.warning(f"[claude] is_available check failed: {e}")
             return False
         except Exception as e:
-            logger.error(f"[claude] Unexpected error in is_available: {e}")
+            log.error(f"[claude] Unexpected error in is_available: {e}")
             return False
 
 
@@ -219,7 +220,7 @@ def get_claude_reviewer(config: dict = None) -> Optional[ClaudeReviewer]:
     api_key = os.environ.get(api_key_env)
 
     if not api_key:
-        logger.warning(f"[claude] {api_key_env} not set, Claude review unavailable")
+        log.warning(f"[claude] {api_key_env} not set, Claude review unavailable")
         return None
 
     model = config.get("claude_model", "claude-opus-4-20250514")

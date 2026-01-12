@@ -10,9 +10,10 @@ Phase 2: If a modification is accepted, all LLMs vote on the modified insight
 """
 
 import asyncio
-import logging
 from datetime import datetime
 from typing import Optional, Tuple
+
+from shared.logging import get_logger
 
 from .models import ReviewResponse, ReviewRound, RefinementRecord
 from .prompts import (
@@ -24,7 +25,7 @@ from .prompts import (
 )
 from .claude_api import ClaudeReviewer
 
-logger = logging.getLogger(__name__)
+log = get_logger("explorer", "review_panel.round4")
 
 
 async def run_round4(
@@ -52,7 +53,7 @@ async def run_round4(
         - refinement_record: Record of the modification if one was accepted, else None
         - is_intractable: True if no LLM could propose a valid fix
     """
-    logger.info("[round4] Starting modification-focused review")
+    log.info("[round4] Starting modification-focused review")
 
     # Build summaries of previous rounds
     round1 = next((r for r in review_rounds if r.round_number == 1), None)
@@ -68,7 +69,7 @@ async def run_round4(
     final_ratings = {llm: r.rating for llm, r in final_round.responses.items()} if final_round else {}
 
     # Phase 1: Get modification proposals from all LLMs
-    logger.info("[round4] Phase 1: Getting modification proposals")
+    log.info("[round4] Phase 1: Getting modification proposals")
 
     prompt = build_round4_modification_prompt(
         chunk_insight=chunk_insight,
@@ -93,27 +94,27 @@ async def run_round4(
     task_names = [t[0] for t in tasks]
     task_coros = [t[1] for t in tasks]
 
-    logger.info(f"[round4] Running modification proposals: {task_names}")
+    log.info(f"[round4] Running modification proposals: {task_names}")
     results = await asyncio.gather(*task_coros, return_exceptions=True)
 
     # Collect proposals
     proposals = {}
     for name, result in zip(task_names, results):
         if isinstance(result, Exception):
-            logger.error(f"[round4] {name} proposal failed: {result}")
+            log.error(f"[round4] {name} proposal failed: {result}")
         else:
             proposals[name] = result
             if result.get("can_be_fixed"):
-                logger.info(f"[round4] {name} proposed a fix (expected rating: {result.get('expected_rating')})")
+                log.info(f"[round4] {name} proposed a fix (expected rating: {result.get('expected_rating')})")
             else:
-                logger.info(f"[round4] {name} says insight cannot be fixed")
+                log.info(f"[round4] {name} says insight cannot be fixed")
 
     # Select best modification using priority logic
     best_mod, mod_source, mod_rationale = _select_best_modification(proposals)
 
     if not best_mod:
         # No valid modification proposed - mark as intractable
-        logger.info("[round4] No valid modifications proposed - insight is intractable")
+        log.info("[round4] No valid modifications proposed - insight is intractable")
 
         # Build response round with diagnoses
         responses = {}
@@ -142,7 +143,7 @@ async def run_round4(
         return review_round, None, None, True
 
     # Phase 2: Get final votes on the modified insight
-    logger.info(f"[round4] Phase 2: Getting final votes on modification from {mod_source}")
+    log.info(f"[round4] Phase 2: Getting final votes on modification from {mod_source}")
 
     vote_prompt = build_round4_final_vote_prompt(
         original_insight=chunk_insight,
@@ -164,14 +165,14 @@ async def run_round4(
     vote_names = [t[0] for t in vote_tasks]
     vote_coros = [t[1] for t in vote_tasks]
 
-    logger.info(f"[round4] Running final votes: {vote_names}")
+    log.info(f"[round4] Running final votes: {vote_names}")
     vote_results = await asyncio.gather(*vote_coros, return_exceptions=True)
 
     # Build responses
     responses = {}
     for name, result in zip(vote_names, vote_results):
         if isinstance(result, Exception):
-            logger.error(f"[round4] {name} vote failed: {result}")
+            log.error(f"[round4] {name} vote failed: {result}")
             responses[name] = ReviewResponse(
                 llm=name,
                 mode="final_vote",
@@ -193,7 +194,7 @@ async def run_round4(
                 reasoning=result["reasoning"],
                 confidence=result["confidence"],
             )
-            logger.info(f"[round4] {name} voted {result['rating']} (resolves: {result.get('resolves_dispute', '?')})")
+            log.info(f"[round4] {name} voted {result['rating']} (resolves: {result.get('resolves_dispute', '?')})")
 
     # Determine outcome
     ratings = [r.rating for r in responses.values()]
@@ -201,7 +202,7 @@ async def run_round4(
 
     if len(unique_ratings) == 1:
         outcome = "resolved"
-        logger.info(f"[round4] Unanimous on modified insight: {ratings[0]}")
+        log.info(f"[round4] Unanimous on modified insight: {ratings[0]}")
     else:
         # Check for majority
         rating_counts = {r: ratings.count(r) for r in unique_ratings}
@@ -209,10 +210,10 @@ async def run_round4(
         if max_count >= 2:
             outcome = "majority"
             majority_rating = [r for r, c in rating_counts.items() if c == max_count][0]
-            logger.info(f"[round4] Majority on modified insight: {majority_rating} ({max_count}/{len(ratings)})")
+            log.info(f"[round4] Majority on modified insight: {majority_rating} ({max_count}/{len(ratings)})")
         else:
             outcome = "still_disputed"
-            logger.info(f"[round4] Still disputed after modification: {ratings}")
+            log.info(f"[round4] Still disputed after modification: {ratings}")
 
     # Create refinement record
     refinement_record = RefinementRecord(
@@ -260,7 +261,7 @@ def _select_best_modification(proposals: dict) -> Tuple[Optional[str], Optional[
             p = proposals[llm]
             if p.get("can_be_fixed") and p.get("proposed_modification"):
                 if p.get("expected_rating") == "⚡":
-                    logger.info(f"[round4] Accepting Profound modification from {llm}")
+                    log.info(f"[round4] Accepting Profound modification from {llm}")
                     return p["proposed_modification"], llm, p.get("modification_rationale", "")
 
     # Second pass: accept any valid modification
@@ -268,7 +269,7 @@ def _select_best_modification(proposals: dict) -> Tuple[Optional[str], Optional[
         if llm in proposals:
             p = proposals[llm]
             if p.get("can_be_fixed") and p.get("proposed_modification"):
-                logger.info(f"[round4] Accepting modification from {llm} (expected: {p.get('expected_rating')})")
+                log.info(f"[round4] Accepting modification from {llm} (expected: {p.get('expected_rating')})")
                 return p["proposed_modification"], llm, p.get("modification_rationale", "")
 
     return None, None, None
@@ -276,7 +277,7 @@ def _select_best_modification(proposals: dict) -> Tuple[Optional[str], Optional[
 
 async def _get_modification_proposal(browser, prompt: str, llm_name: str) -> dict:
     """Get modification proposal from Gemini or ChatGPT."""
-    logger.info(f"[round4] Getting modification proposal from {llm_name}")
+    log.info(f"[round4] Getting modification proposal from {llm_name}")
 
     try:
         # Start fresh chat
@@ -298,13 +299,13 @@ async def _get_modification_proposal(browser, prompt: str, llm_name: str) -> dic
         return parse_round4_modification_response(response_text)
 
     except Exception as e:
-        logger.error(f"[round4] {llm_name} modification proposal failed: {e}")
+        log.error(f"[round4] {llm_name} modification proposal failed: {e}")
         raise
 
 
 async def _get_modification_proposal_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> dict:
     """Get modification proposal from Claude."""
-    logger.info("[round4] Getting modification proposal from Claude")
+    log.info("[round4] Getting modification proposal from Claude")
 
     try:
         # Use extended thinking for deep analysis
@@ -317,13 +318,13 @@ async def _get_modification_proposal_claude(claude_reviewer: ClaudeReviewer, pro
         return parse_round4_modification_response(response_text)
 
     except Exception as e:
-        logger.error(f"[round4] Claude modification proposal failed: {e}")
+        log.error(f"[round4] Claude modification proposal failed: {e}")
         raise
 
 
 async def _get_final_vote(browser, prompt: str, llm_name: str) -> dict:
     """Get final vote from Gemini or ChatGPT."""
-    logger.info(f"[round4] Getting final vote from {llm_name}")
+    log.info(f"[round4] Getting final vote from {llm_name}")
 
     try:
         # Start fresh chat (don't need deep mode for simple vote)
@@ -336,13 +337,13 @@ async def _get_final_vote(browser, prompt: str, llm_name: str) -> dict:
         return parse_round4_final_vote_response(response_text)
 
     except Exception as e:
-        logger.error(f"[round4] {llm_name} final vote failed: {e}")
+        log.error(f"[round4] {llm_name} final vote failed: {e}")
         raise
 
 
 async def _get_final_vote_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> dict:
     """Get final vote from Claude."""
-    logger.info("[round4] Getting final vote from Claude")
+    log.info("[round4] Getting final vote from Claude")
 
     try:
         # Standard mode for simple vote
@@ -355,5 +356,5 @@ async def _get_final_vote_claude(claude_reviewer: ClaudeReviewer, prompt: str) -
         return parse_round4_final_vote_response(response_text)
 
     except Exception as e:
-        logger.error(f"[round4] Claude final vote failed: {e}")
+        log.error(f"[round4] Claude final vote failed: {e}")
         raise
