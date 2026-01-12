@@ -622,34 +622,7 @@ class ChatGPTInterface(BaseLLMInterface):
             # Renaming is best-effort, don't fail if it doesn't work
             print(f"[chatgpt] Could not rename chat (non-critical): {e}")
 
-    async def _paste_text(self, element, text: str):
-        """
-        Paste text into an element using DOM manipulation.
-        This is faster than keyboard.type() and doesn't trigger form submission on newlines.
-        Works with Trusted Types security policies.
-        """
-        # Use DOM manipulation instead of innerHTML (may be blocked by Trusted Types)
-        await element.evaluate("""(el, text) => {
-            // Clear existing content
-            el.textContent = '';
-
-            // Focus the element
-            el.focus();
-
-            // Use DOM manipulation to add text with line breaks
-            const lines = text.split('\\n');
-            lines.forEach((line, index) => {
-                if (index > 0) {
-                    el.appendChild(document.createElement('br'));
-                }
-                if (line) {
-                    el.appendChild(document.createTextNode(line));
-                }
-            });
-
-            // Dispatch input event to notify any listeners
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-        }""", text)
+    # _paste_text() is inherited from BaseLLMInterface
 
     async def _monitor_and_notify_url(self):
         """Monitor URL and notify when it changes to include conversation ID."""
@@ -666,60 +639,39 @@ class ChatGPTInterface(BaseLLMInterface):
             await asyncio.sleep(1)
         log.warning("browser.chatgpt.url_monitor_timeout")
 
+    # Selectors for detecting generation state and extracting responses
+    PROCESSING_SELECTORS = [
+        "button[aria-label='Stop generating']",
+        "button[aria-label='Stop streaming']",
+        "button[aria-label='Stop']",
+    ]
+
+    RESPONSE_SELECTORS = [
+        "div[data-message-author-role='assistant']",
+        "[data-testid='conversation-turn']:last-child div.markdown",
+        "div.agent-turn div.markdown",
+    ]
+
     async def is_generating(self) -> bool:
         """Check if ChatGPT is currently generating a response."""
-        # Check for stop button which indicates active generation
-        streaming_selectors = [
-            "button[aria-label='Stop generating']",
-            "button[aria-label='Stop streaming']",
-            "button[aria-label='Stop']",
-        ]
-
-        for selector in streaming_selectors:
-            try:
-                elem = await self.page.query_selector(selector)
-                if elem and await elem.is_visible():
-                    return True
-            except Exception:
-                continue
-        return False
+        return await self._is_generating_with_selectors(self.PROCESSING_SELECTORS)
 
     async def try_get_response(self) -> Optional[str]:
         """
         Try to get the last response if already generated, without waiting.
 
-        Used for recovery after restart - checks if a response exists and
-        is not currently being generated.
-
         Returns:
             Response text if ready, None if still generating or no response.
         """
-        # If still generating, return None
-        if await self.is_generating():
-            log.info("browser.chatgpt.try_get_response", status="still_generating")
-            return None
-
-        # Selectors for assistant messages
-        response_selectors = [
-            "div[data-message-author-role='assistant']",
-            "[data-testid='conversation-turn']:last-child div.markdown",
-            "div.agent-turn div.markdown",
-        ]
-
-        for selector in response_selectors:
-            try:
-                messages = await self.page.query_selector_all(selector)
-                if messages:
-                    last_msg = messages[-1]
-                    response = await last_msg.inner_text()
-                    if response and len(response) > 10:
-                        log.info("browser.chatgpt.try_get_response", status="found", chars=len(response))
-                        return response.strip()
-            except Exception:
-                continue
-
-        log.info("browser.chatgpt.try_get_response", status="not_found")
-        return None
+        result = await self._try_get_response_with_selectors(
+            self.RESPONSE_SELECTORS,
+            self.PROCESSING_SELECTORS,
+        )
+        if result:
+            log.info("browser.chatgpt.try_get_response", status="found", chars=len(result))
+        else:
+            log.info("browser.chatgpt.try_get_response", status="not_found_or_generating")
+        return result
 
 
 class RateLimitError(Exception):

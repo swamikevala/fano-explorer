@@ -495,32 +495,7 @@ class ClaudeInterface(BaseLLMInterface):
             return last_response.strip()
         raise TimeoutError("Claude response timeout")
 
-    async def _paste_text(self, element, text: str):
-        """
-        Paste text into an element using DOM manipulation.
-        Works with ProseMirror and contenteditable elements.
-        """
-        await element.evaluate("""(el, text) => {
-            // Clear existing content
-            el.textContent = '';
-
-            // Focus the element
-            el.focus();
-
-            // Use DOM manipulation to add text with line breaks
-            const lines = text.split('\\n');
-            lines.forEach((line, index) => {
-                if (index > 0) {
-                    el.appendChild(document.createElement('br'));
-                }
-                if (line) {
-                    el.appendChild(document.createTextNode(line));
-                }
-            });
-
-            // Dispatch input event to notify any listeners
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-        }""", text)
+    # _paste_text() is inherited from BaseLLMInterface
 
     async def _monitor_and_notify_url(self):
         """Monitor URL and notify when it changes to include conversation ID."""
@@ -538,60 +513,43 @@ class ClaudeInterface(BaseLLMInterface):
             await asyncio.sleep(1)
         log.warning("[claude] URL monitor: never saw URL change to conversation URL")
 
+    # Selectors for detecting generation state and extracting responses
+    PROCESSING_SELECTORS = [
+        "[data-is-streaming='true']",
+        "button[aria-label='Stop']",
+        "button:has-text('Stop')",
+        ".animate-pulse",
+        "[class*='loading']",
+    ]
+
+    RESPONSE_SELECTORS = [
+        "[data-testid='message-content']",
+        "div[data-is-streaming]",
+        ".font-claude-message",
+        "[data-message-author='assistant']",
+        "div.prose",
+    ]
+
     async def is_generating(self) -> bool:
         """Check if Claude is currently generating a response."""
-        still_processing_selectors = [
-            "[data-is-streaming='true']",
-            "button[aria-label='Stop']",
-            "button:has-text('Stop')",
-            ".animate-pulse",
-            "[class*='loading']",
-        ]
-
-        for selector in still_processing_selectors:
-            try:
-                elem = await self.page.query_selector(selector)
-                if elem and await elem.is_visible():
-                    return True
-            except Exception:
-                continue
-        return False
+        return await self._is_generating_with_selectors(self.PROCESSING_SELECTORS)
 
     async def try_get_response(self) -> Optional[str]:
         """
         Try to get the last response if already generated, without waiting.
 
-        Used for recovery after restart.
-
         Returns:
             Response text if ready, None if still generating or no response.
         """
-        if await self.is_generating():
-            log.info("[claude] try_get_response: still generating")
-            return None
-
-        response_selectors = [
-            "[data-testid='message-content']",
-            "div[data-is-streaming]",
-            ".font-claude-message",
-            "[data-message-author='assistant']",
-            "div.prose",
-        ]
-
-        for selector in response_selectors:
-            try:
-                messages = await self.page.query_selector_all(selector)
-                if messages:
-                    last_msg = messages[-1]
-                    response = await last_msg.inner_text()
-                    if response and len(response) > 10:
-                        log.info(f"[claude] try_get_response: found response ({len(response)} chars)")
-                        return response.strip()
-            except Exception:
-                continue
-
-        log.info("[claude] try_get_response: no response found")
-        return None
+        result = await self._try_get_response_with_selectors(
+            self.RESPONSE_SELECTORS,
+            self.PROCESSING_SELECTORS,
+        )
+        if result:
+            log.info(f"[claude] try_get_response: found response ({len(result)} chars)")
+        else:
+            log.info("[claude] try_get_response: no response found or still generating")
+        return result
 
     async def get_conversation_history(self) -> list[dict]:
         """Extract full conversation history from current chat."""

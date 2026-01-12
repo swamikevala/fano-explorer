@@ -549,3 +549,150 @@ class BaseLLMInterface:
     async def is_generating(self) -> bool:
         """Check if the LLM is currently generating a response."""
         raise NotImplementedError
+
+    # -------------------------------------------------------------------------
+    # Common utility methods used by all browser interfaces
+    # -------------------------------------------------------------------------
+
+    async def find_first_element(
+        self,
+        selectors: list[str],
+        timeout: int = 0,
+        require_visible: bool = False,
+    ):
+        """
+        Find the first matching element from a list of selectors.
+
+        Args:
+            selectors: List of CSS selectors to try in order
+            timeout: If > 0, use wait_for_selector with this timeout (ms)
+            require_visible: If True, only return elements that are visible
+
+        Returns:
+            Tuple of (element, selector_used) or (None, None) if not found
+        """
+        for selector in selectors:
+            try:
+                if timeout > 0:
+                    element = await self.page.wait_for_selector(selector, timeout=timeout)
+                else:
+                    element = await self.page.query_selector(selector)
+
+                if element:
+                    if require_visible:
+                        is_visible = await element.is_visible()
+                        if not is_visible:
+                            continue
+                    return element, selector
+            except Exception:
+                continue
+
+        return None, None
+
+    async def find_all_elements(self, selectors: list[str]):
+        """
+        Find all elements matching the first successful selector.
+
+        Args:
+            selectors: List of CSS selectors to try in order
+
+        Returns:
+            Tuple of (elements_list, selector_used) or ([], None) if not found
+        """
+        for selector in selectors:
+            try:
+                elements = await self.page.query_selector_all(selector)
+                if elements:
+                    return elements, selector
+            except Exception:
+                continue
+
+        return [], None
+
+    async def _paste_text(self, element, text: str):
+        """
+        Paste text into an element using DOM manipulation.
+
+        Works with ProseMirror and contenteditable elements better than
+        keyboard.type() which can be slow and unreliable.
+        """
+        await element.evaluate("""(el, text) => {
+            // Clear existing content
+            el.textContent = '';
+
+            // Focus the element
+            el.focus();
+
+            // Use DOM manipulation to add text with line breaks
+            const lines = text.split('\\n');
+            lines.forEach((line, index) => {
+                if (index > 0) {
+                    el.appendChild(document.createElement('br'));
+                }
+                if (line) {
+                    el.appendChild(document.createTextNode(line));
+                }
+            });
+
+            // Dispatch input event to notify any listeners
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }""", text)
+
+    async def _is_generating_with_selectors(self, processing_selectors: list[str]) -> bool:
+        """
+        Check if LLM is generating using provided processing indicator selectors.
+
+        Args:
+            processing_selectors: List of selectors that indicate generation in progress
+
+        Returns:
+            True if any processing indicator is visible
+        """
+        for selector in processing_selectors:
+            try:
+                elem = await self.page.query_selector(selector)
+                if elem and await elem.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _try_get_response_with_selectors(
+        self,
+        response_selectors: list[str],
+        processing_selectors: list[str],
+        min_length: int = 10,
+    ) -> Optional[str]:
+        """
+        Try to get the last response without waiting.
+
+        Args:
+            response_selectors: Selectors to find response elements
+            processing_selectors: Selectors indicating generation in progress
+            min_length: Minimum response length to consider valid
+
+        Returns:
+            Response text if ready, None if still generating or no response
+        """
+        # Check if still generating
+        if await self._is_generating_with_selectors(processing_selectors):
+            return None
+
+        # Try to extract response
+        for selector in response_selectors:
+            try:
+                messages = await self.page.query_selector_all(selector)
+                if messages:
+                    last_msg = messages[-1]
+                    response = await last_msg.inner_text()
+                    if response and len(response) > min_length:
+                        return response.strip()
+            except Exception:
+                continue
+
+        return None
+
+    @property
+    def chat_log(self) -> ChatLogger:
+        """Alias for chat_logger for backward compatibility."""
+        return self.chat_logger

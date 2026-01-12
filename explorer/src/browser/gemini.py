@@ -862,34 +862,7 @@ class GeminiInterface(BaseLLMInterface):
             # Renaming is best-effort, don't fail if it doesn't work
             print(f"[gemini] Could not rename chat (non-critical): {e}")
 
-    async def _paste_text(self, element, text: str):
-        """
-        Paste text into an element using DOM manipulation.
-        This is faster than keyboard.type() and doesn't trigger form submission on newlines.
-        Works with Trusted Types security policies.
-        """
-        # Use DOM manipulation instead of innerHTML (blocked by Trusted Types)
-        await element.evaluate("""(el, text) => {
-            // Clear existing content
-            el.textContent = '';
-
-            // Focus the element
-            el.focus();
-
-            // Use DOM manipulation to add text with line breaks
-            const lines = text.split('\\n');
-            lines.forEach((line, index) => {
-                if (index > 0) {
-                    el.appendChild(document.createElement('br'));
-                }
-                if (line) {
-                    el.appendChild(document.createTextNode(line));
-                }
-            });
-
-            // Dispatch input event to notify any listeners
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-        }""", text)
+    # _paste_text() is inherited from BaseLLMInterface
 
     async def _monitor_and_notify_url(self):
         """Monitor URL and notify when it changes to include conversation ID."""
@@ -907,70 +880,49 @@ class GeminiInterface(BaseLLMInterface):
             await asyncio.sleep(1)
         log.warning("[gemini] URL monitor: never saw URL change to conversation URL")
 
+    # Selectors for detecting generation state and extracting responses
+    PROCESSING_SELECTORS = [
+        ".loading",
+        "[aria-busy='true']",
+        "mat-spinner",
+        "[data-thinking='true']",
+        ".thinking-indicator",
+        ".animate-pulse",
+        ".animate-spin",
+        "[class*='loading']",
+        "[class*='spinner']",
+        "button[aria-label*='Stop']",
+        "button[aria-label*='Cancel']",
+        "button:has-text('Stop')",
+    ]
+
+    RESPONSE_SELECTORS = [
+        "message-content.model-response-text",
+        "div.model-response-text",
+        "div[data-message-id] .markdown-content",
+        ".response-container .markdown",
+    ]
+
     async def is_generating(self) -> bool:
         """Check if Gemini is currently generating a response."""
-        # Selectors that indicate Gemini is still thinking/processing
-        still_processing_selectors = [
-            ".loading",
-            "[aria-busy='true']",
-            "mat-spinner",
-            "[data-thinking='true']",
-            ".thinking-indicator",
-            ".animate-pulse",
-            ".animate-spin",
-            "[class*='loading']",
-            "[class*='spinner']",
-            "button[aria-label*='Stop']",
-            "button[aria-label*='Cancel']",
-            "button:has-text('Stop')",
-        ]
-
-        for selector in still_processing_selectors:
-            try:
-                elem = await self.page.query_selector(selector)
-                if elem and await elem.is_visible():
-                    return True
-            except Exception:
-                continue
-        return False
+        return await self._is_generating_with_selectors(self.PROCESSING_SELECTORS)
 
     async def try_get_response(self) -> Optional[str]:
         """
         Try to get the last response if already generated, without waiting.
 
-        Used for recovery after restart - checks if a response exists and
-        is not currently being generated.
-
         Returns:
             Response text if ready, None if still generating or no response.
         """
-        # If still generating, return None
-        if await self.is_generating():
-            log.info("[gemini] try_get_response: still generating")
-            return None
-
-        # Selectors for model responses
-        response_selectors = [
-            "message-content.model-response-text",
-            "div.model-response-text",
-            "div[data-message-id] .markdown-content",
-            ".response-container .markdown",
-        ]
-
-        for selector in response_selectors:
-            try:
-                messages = await self.page.query_selector_all(selector)
-                if messages:
-                    last_msg = messages[-1]
-                    response = await last_msg.inner_text()
-                    if response and len(response) > 10:
-                        log.info(f"[gemini] try_get_response: found response ({len(response)} chars)")
-                        return response.strip()
-            except Exception:
-                continue
-
-        log.info("[gemini] try_get_response: no response found")
-        return None
+        result = await self._try_get_response_with_selectors(
+            self.RESPONSE_SELECTORS,
+            self.PROCESSING_SELECTORS,
+        )
+        if result:
+            log.info(f"[gemini] try_get_response: found response ({len(result)} chars)")
+        else:
+            log.info("[gemini] try_get_response: no response found or still generating")
+        return result
 
 
 class RateLimitError(Exception):
