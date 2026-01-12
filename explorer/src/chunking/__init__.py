@@ -25,10 +25,6 @@ from .prompts import (
     parse_post_refinement_review,
 )
 # Use shared deduplication module
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-
 from shared.deduplication import (
     DeduplicationChecker,
     get_dedup_checker,

@@ -14,9 +14,6 @@ import sys
 import asyncio
 from pathlib import Path
 
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table

@@ -33,7 +33,7 @@ def check_pool_health(host: str = "127.0.0.1", port: int = 9000) -> bool:
 @bp.route("/start/<component>", methods=["POST"])
 def api_start(component: str):
     """Start a component."""
-    if component not in ["pool", "explorer", "documenter"]:
+    if component not in ["pool", "explorer", "documenter", "researcher"]:
         return jsonify({"error": f"Unknown component: {component}"}), 400
 
     config = load_config()
@@ -59,6 +59,8 @@ def api_start(component: str):
             pm.start_explorer(options.get("mode", "start"))
         elif component == "documenter":
             pm.start_documenter()
+        elif component == "researcher":
+            pm.start_researcher()
 
         return jsonify({"status": "started", "component": component})
     except Exception as e:
@@ -68,7 +70,7 @@ def api_start(component: str):
 @bp.route("/stop/<component>", methods=["POST"])
 def api_stop(component: str):
     """Stop a component."""
-    if component not in ["pool", "explorer", "documenter"]:
+    if component not in ["pool", "explorer", "documenter", "researcher"]:
         return jsonify({"error": f"Unknown component: {component}"}), 400
 
     pm = get_process_manager()

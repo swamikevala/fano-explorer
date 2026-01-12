@@ -1219,6 +1219,7 @@
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showPage('dashboard')">Dashboard</button>
             <button class="nav-tab" onclick="showPage('explorer')">Explorer</button>
+            <button class="nav-tab" onclick="showPage('researcher')">Researcher</button>
             <button class="nav-tab" onclick="showPage('document')">Document</button>
             <button class="nav-tab" onclick="showPage('logs')">Logs</button>
         </div>
@@ -1234,6 +1235,10 @@
             <div class="nav-indicator">
                 <span class="dot" id="nav-documenter-dot"></span>
                 <span>Documenter</span>
+            </div>
+            <div class="nav-indicator">
+                <span class="dot" id="nav-researcher-dot"></span>
+                <span>Researcher</span>
             </div>
             <button class="btn btn-secondary" onclick="restartServer(this)" style="margin-left: 1rem; padding: 0.25rem 0.75rem; font-size: 0.85rem;">Restart Server</button>
         </div>
@@ -1333,6 +1338,42 @@
                         <div class="section-title">Recent Events</div>
                         <div id="documenter-events" style="background: var(--accent); padding: 0.75rem; border-radius: 8px; font-size: 0.85rem; max-height: 150px; overflow-y: auto;">
                             <span style="color: var(--text-dim);">No recent events</span>
+                        </div>
+                    </div>
+
+                    <!-- Researcher -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Researcher</span>
+                            <span id="researcher-status" class="status-badge status-loading">...</span>
+                        </div>
+                        <p style="color: var(--text-dim); margin-bottom: 1rem;">
+                            External source discovery and cross-domain pattern analysis
+                        </p>
+                        <div class="btn-group">
+                            <button id="researcher-start" class="btn btn-primary" onclick="startComponent('researcher')" disabled>Start</button>
+                            <button id="researcher-stop" class="btn btn-danger" onclick="stopComponent('researcher')" disabled>Stop</button>
+                            <button class="btn btn-secondary" onclick="showPage('researcher')">View Findings</button>
+                        </div>
+
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-value" id="researcher-sources">0</div>
+                                <div class="stat-label">Sources</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="researcher-findings">0</div>
+                                <div class="stat-label">Findings</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="researcher-patterns">0</div>
+                                <div class="stat-label">Patterns</div>
+                            </div>
+                        </div>
+
+                        <div class="section-title">Top Numbers</div>
+                        <div id="researcher-top-numbers" style="background: var(--accent); padding: 0.75rem; border-radius: 8px; font-size: 0.85rem;">
+                            <span style="color: var(--text-dim);">No data yet</span>
                         </div>
                     </div>
 
@@ -1474,6 +1515,34 @@
                 </div>
             </div>
         </div>
+
+        <!-- Researcher Page -->
+        <div id="page-researcher" class="page">
+            <div class="container" style="max-width: 1200px;">
+                <div style="display: flex; gap: 1.5rem;">
+                    <!-- Sidebar -->
+                    <div style="width: 200px; flex-shrink: 0;">
+                        <div class="card" style="padding: 1rem;">
+                            <div class="section-title" style="margin-top: 0;">View</div>
+                            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                <button class="btn btn-secondary researcher-view-btn active" onclick="loadResearcherView('findings')">Findings</button>
+                                <button class="btn btn-secondary researcher-view-btn" onclick="loadResearcherView('patterns')">Number Patterns</button>
+                                <button class="btn btn-secondary researcher-view-btn" onclick="loadResearcherView('sources')">Sources</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main Content -->
+                    <div style="flex: 1;">
+                        <div id="researcher-content">
+                            <div class="card">
+                                <p style="color: var(--text-dim);">Loading...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Annotation Action Menu -->
@@ -1534,6 +1603,8 @@
                 loadExplorerInsights(currentExplorerStatus);
             } else if (pageName === 'llm-activity') {
                 loadLLMActivityDetail();
+            } else if (pageName === 'researcher') {
+                loadResearcherView('findings');
             }
         }
 
@@ -1767,6 +1838,12 @@
             updateComponentStatus('documenter', data.documenter.running);
             document.getElementById('nav-documenter-dot').className = 'dot' + (data.documenter.running ? ' running' : '');
 
+            // Researcher
+            if (data.researcher) {
+                updateComponentStatus('researcher', data.researcher.running);
+                document.getElementById('nav-researcher-dot').className = 'dot' + (data.researcher.running ? ' running' : '');
+            }
+
             // Backends
             const backendsGrid = document.getElementById('backends-grid');
             backendsGrid.innerHTML = '';
@@ -1788,6 +1865,25 @@
             document.getElementById('explorer-blessed').textContent = data.stats.explorer.blessed;
             document.getElementById('documenter-sections').textContent = data.stats.documenter.sections;
             document.getElementById('documenter-calls').textContent = data.stats.documenter.consensus_calls;
+
+            // Researcher stats
+            if (data.stats.researcher) {
+                document.getElementById('researcher-sources').textContent = data.stats.researcher.sources || 0;
+                document.getElementById('researcher-findings').textContent = data.stats.researcher.findings || 0;
+                document.getElementById('researcher-patterns').textContent = data.stats.researcher.patterns || 0;
+
+                // Update top numbers
+                const topNumbers = data.stats.researcher.top_numbers || {};
+                const topEl = document.getElementById('researcher-top-numbers');
+                const entries = Object.entries(topNumbers).slice(0, 5);
+                if (entries.length > 0) {
+                    topEl.innerHTML = entries.map(([num, count]) =>
+                        `<span style="margin-right: 1rem; color: var(--text);">${num}: <span style="color: var(--text-dim);">${count}</span></span>`
+                    ).join('');
+                } else {
+                    topEl.innerHTML = '<span style="color: var(--text-dim);">No data yet</span>';
+                }
+            }
         }
 
         function updateComponentStatus(component, running, external = false) {
@@ -2974,6 +3070,157 @@
                 actionMenu.style.display = 'none';
             }
         });
+
+        // Researcher page functions
+        let currentResearcherView = 'findings';
+
+        async function loadResearcherView(view) {
+            currentResearcherView = view;
+            const content = document.getElementById('researcher-content');
+            content.innerHTML = '<div class="card"><p style="color: var(--text-dim);">Loading...</p></div>';
+
+            // Update active button
+            document.querySelectorAll('.researcher-view-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.textContent.toLowerCase().includes(view.split(/(?=[A-Z])/).join(' ').toLowerCase())) {
+                    btn.classList.add('active');
+                }
+            });
+            // Also handle exact match
+            document.querySelectorAll('.researcher-view-btn').forEach(btn => {
+                if (view === 'findings' && btn.textContent === 'Findings') btn.classList.add('active');
+                if (view === 'patterns' && btn.textContent === 'Number Patterns') btn.classList.add('active');
+                if (view === 'sources' && btn.textContent === 'Sources') btn.classList.add('active');
+            });
+
+            try {
+                if (view === 'findings') {
+                    const resp = await fetch('/api/researcher/findings?limit=30');
+                    const data = await resp.json();
+                    renderResearcherFindings(data.findings || []);
+                } else if (view === 'patterns') {
+                    const resp = await fetch('/api/researcher/patterns');
+                    const data = await resp.json();
+                    renderResearcherPatterns(data.patterns || []);
+                } else if (view === 'sources') {
+                    const resp = await fetch('/api/researcher/sources?limit=50');
+                    const data = await resp.json();
+                    renderResearcherSources(data.sources || []);
+                }
+            } catch (e) {
+                content.innerHTML = `<div class="card"><p style="color: var(--error);">Error loading ${view}: ${e.message}</p></div>`;
+            }
+        }
+
+        function renderResearcherFindings(findings) {
+            const content = document.getElementById('researcher-content');
+            if (findings.length === 0) {
+                content.innerHTML = `
+                    <div class="card">
+                        <h3 style="margin-bottom: 1rem;">No Findings Yet</h3>
+                        <p style="color: var(--text-dim);">Start the researcher to discover external sources and extract findings about mathematical concepts and sacred numbers.</p>
+                    </div>`;
+                return;
+            }
+
+            let html = '';
+            for (const f of findings) {
+                const typeColor = f.finding_type === 'supporting' ? 'var(--success)' :
+                                  f.finding_type === 'challenging' ? 'var(--error)' :
+                                  f.finding_type === 'alternative' ? 'var(--warning)' : 'var(--text-dim)';
+                html += `
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                            <span class="tag" style="background: ${typeColor}; color: #000;">${f.finding_type || 'contextual'}</span>
+                            <span style="color: var(--text-dim); font-size: 0.8rem;">${f.domain || ''}</span>
+                        </div>
+                        <p style="margin-bottom: 0.75rem; line-height: 1.5;">${escapeHtml(f.summary || '')}</p>
+                        ${f.original_quote ? `
+                            <blockquote style="border-left: 3px solid var(--accent); padding-left: 1rem; margin: 0.75rem 0; color: var(--text-secondary); font-style: italic;">
+                                "${escapeHtml(f.original_quote)}"
+                            </blockquote>` : ''}
+                        <div style="display: flex; gap: 1.5rem; font-size: 0.8rem; color: var(--text-dim); margin-top: 0.75rem;">
+                            <span>Confidence: ${((f.confidence || 0) * 100).toFixed(0)}%</span>
+                            <span>Relevance: ${((f.relevance_score || 0) * 100).toFixed(0)}%</span>
+                        </div>
+                    </div>`;
+            }
+            content.innerHTML = html;
+        }
+
+        function renderResearcherPatterns(patterns) {
+            const content = document.getElementById('researcher-content');
+            if (patterns.length === 0) {
+                content.innerHTML = `
+                    <div class="card">
+                        <h3 style="margin-bottom: 1rem;">No Cross-Domain Patterns Yet</h3>
+                        <p style="color: var(--text-dim);">Patterns appear when the same number is found across multiple knowledge domains (e.g., mathematics, philosophy, sacred texts).</p>
+                    </div>`;
+                return;
+            }
+
+            let html = '';
+            for (const p of patterns) {
+                const domains = Object.keys(p.domains || {});
+                html += `
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">
+                            <span style="font-size: 2rem; font-weight: bold; color: var(--highlight);">${p.number}</span>
+                            <span style="color: var(--text-dim);">Found in ${p.domain_count || domains.length} domains</span>
+                        </div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                            ${domains.map(d => `<span class="tag">${d}</span>`).join('')}
+                        </div>
+                    </div>`;
+            }
+            content.innerHTML = html;
+        }
+
+        function renderResearcherSources(sources) {
+            const content = document.getElementById('researcher-content');
+            if (sources.length === 0) {
+                content.innerHTML = `
+                    <div class="card">
+                        <h3 style="margin-bottom: 1rem;">No Sources Indexed Yet</h3>
+                        <p style="color: var(--text-dim);">Start the researcher to discover and evaluate external sources.</p>
+                    </div>`;
+                return;
+            }
+
+            let html = '';
+            for (const s of sources) {
+                const trustColor = s.trust_score >= 70 ? 'var(--success)' :
+                                   s.trust_score >= 50 ? 'var(--warning)' : 'var(--text-dim)';
+                const badges = [];
+                if (s.is_academic_domain) badges.push('Academic');
+                if (s.has_sanskrit_citations) badges.push('Sanskrit');
+                if (s.has_bibliography) badges.push('Bibliography');
+
+                html += `
+                    <div class="card" style="margin-bottom: 0.75rem; padding: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;">
+                            <div style="flex: 1; min-width: 0;">
+                                <a href="${escapeHtml(s.url)}" target="_blank" style="color: var(--text); text-decoration: none; font-weight: 500; display: block; margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                    ${escapeHtml(s.title || s.domain)}
+                                </a>
+                                <div style="color: var(--text-dim); font-size: 0.8rem;">${escapeHtml(s.domain)}</div>
+                                ${badges.length > 0 ? `<div style="margin-top: 0.5rem;">${badges.map(b => `<span class="tag" style="font-size: 0.7rem; padding: 0.1rem 0.5rem;">${b}</span>`).join(' ')}</div>` : ''}
+                            </div>
+                            <div style="text-align: right;">
+                                <span style="color: ${trustColor}; font-weight: 600;">${s.trust_score}</span>
+                                <div style="color: var(--text-dim); font-size: 0.75rem;">trust</div>
+                            </div>
+                        </div>
+                    </div>`;
+            }
+            content.innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
 
         function showToast(message) {
             const toast = document.createElement('div');

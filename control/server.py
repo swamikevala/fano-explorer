@@ -22,6 +22,7 @@ from .blueprints import (
     documenter_bp,
     annotations_bp,
     explorer_bp,
+    researcher_bp,
 )
 
 # Suppress ResourceWarning about unclosed transports during shutdown
@@ -103,6 +104,7 @@ def create_app(process_manager: Optional[ProcessManager] = None) -> Flask:
     app.register_blueprint(documenter_bp)
     app.register_blueprint(annotations_bp)
     app.register_blueprint(explorer_bp)
+    app.register_blueprint(researcher_bp)
 
     return app
 

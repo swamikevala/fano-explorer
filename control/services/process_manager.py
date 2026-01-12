@@ -26,6 +26,7 @@ class ProcessManager:
             "pool": None,
             "explorer": None,
             "documenter": None,
+            "researcher": None,
         }
 
     def get(self, component: str) -> Optional[subprocess.Popen]:
@@ -67,7 +68,7 @@ class ProcessManager:
         explorer_script = FANO_ROOT / "explorer" / "fano_explorer.py"
         proc = subprocess.Popen(
             [sys.executable, str(explorer_script), mode],
-            cwd=str(FANO_ROOT / "explorer"),
+            cwd=str(FANO_ROOT),  # Run from fano root for package imports
         )
         self.set("explorer", proc)
         return proc
@@ -77,9 +78,19 @@ class ProcessManager:
         documenter_script = FANO_ROOT / "documenter" / "fano_documenter.py"
         proc = subprocess.Popen(
             [sys.executable, str(documenter_script), "start"],
-            cwd=str(FANO_ROOT / "documenter"),
+            cwd=str(FANO_ROOT),  # Run from fano root for package imports
         )
         self.set("documenter", proc)
+        return proc
+
+    def start_researcher(self) -> subprocess.Popen:
+        """Start the researcher."""
+        researcher_script = FANO_ROOT / "researcher" / "main.py"
+        proc = subprocess.Popen(
+            [sys.executable, str(researcher_script), "start"],
+            cwd=str(FANO_ROOT),  # Run from fano root for package imports
+        )
+        self.set("researcher", proc)
         return proc
 
     def stop(self, component: str) -> bool:

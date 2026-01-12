@@ -29,7 +29,7 @@ def check_pool_health(host: str = "127.0.0.1", port: int = 9000) -> bool:
 
 
 def get_stats() -> dict:
-    """Get statistics from logs."""
+    """Get statistics from logs and data directories."""
     stats = {
         "documenter": {
             "sections": 0,
@@ -38,6 +38,12 @@ def get_stats() -> dict:
         "explorer": {
             "threads": 0,
             "blessed": 0,
+        },
+        "researcher": {
+            "sources": 0,
+            "findings": 0,
+            "patterns": 0,
+            "top_numbers": {},
         },
     }
 
@@ -63,6 +69,20 @@ def get_stats() -> dict:
     if blessed_dir.exists():
         stats["explorer"]["blessed"] = len(list(blessed_dir.glob("*.json")))
 
+    # Get researcher stats
+    try:
+        from researcher.src import ResearcherAPI
+        api = ResearcherAPI(FANO_ROOT / "researcher" / "data")
+        researcher_stats = api.get_statistics()
+        stats["researcher"] = {
+            "sources": researcher_stats.get("sources", 0),
+            "findings": researcher_stats.get("findings", 0),
+            "patterns": researcher_stats.get("cross_domain_numbers", 0),
+            "top_numbers": researcher_stats.get("top_numbers", {}),
+        }
+    except Exception:
+        pass  # Keep default zeros
+
     return stats
 
 
@@ -85,6 +105,9 @@ def api_status():
 
     # Check documenter status
     documenter_running = pm.is_running("documenter") if pm else False
+
+    # Check researcher status
+    researcher_running = pm.is_running("researcher") if pm else False
 
     # Get backend status
     backends = {}
@@ -139,6 +162,10 @@ def api_status():
         "documenter": {
             "running": documenter_running,
             "pid": pm.get_pid("documenter") if pm else None,
+        },
+        "researcher": {
+            "running": researcher_running,
+            "pid": pm.get_pid("researcher") if pm else None,
         },
         "backends": backends,
         "stats": stats,

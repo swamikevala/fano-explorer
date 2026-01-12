@@ -68,6 +68,49 @@ Every log event should include relevant context:
 - Use explicit variable names over clever abbreviations
 - Prefer clarity over brevity
 
+## Import Policy
+
+**Use absolute imports with proper Python packaging. Never use `sys.path` manipulation.**
+
+### Why
+- `sys.path.insert()` creates hidden coupling and breaks when scripts run from unexpected directories
+- Proper packaging ensures consistent imports regardless of working directory
+- Editable installs (`pip install -e .`) make development seamless
+
+### How
+
+The project is installed as an editable package via `pyproject.toml`. All imports should be absolute:
+
+```python
+# Good - absolute imports
+from shared.logging import get_logger
+from explorer.src.review_panel import run_round1
+from pool.src.api import create_app
+
+# Bad - sys.path manipulation (NEVER do this)
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))  # NO!
+```
+
+### Running Scripts
+
+All scripts should be run from the `fano/` root directory, or use the control panel which handles this automatically. The `ProcessManager` runs all subprocesses with `cwd=FANO_ROOT`.
+
+### Adding New Packages
+
+When adding a new top-level module, update `pyproject.toml`:
+
+```toml
+[tool.setuptools.packages.find]
+include = [
+    "shared*", "llm*", "pool*", "explorer*",
+    "documenter*", "control*", "researcher*",
+    "your_new_module*",  # Add here
+]
+```
+
+Then reinstall: `pip install -e .`
+
 ## Common Commands
 
 ```bash

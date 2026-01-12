@@ -287,3 +287,16 @@ async def _get_final_vote(executor: LLMExecutor, prompt: str) -> dict:
     except Exception as e:
         log.error("round4.vote_error", llm=executor.name, error=str(e))
         raise
+
+
+async def _get_final_vote_claude(claude_reviewer: ClaudeReviewer, prompt: str) -> dict:
+    """Get final vote from Claude using its API client."""
+    log.info("round4.getting_vote", llm="claude")
+
+    try:
+        # Use standard mode (no extended thinking) for simple vote
+        response_text = await claude_reviewer.send_message(prompt, extended_thinking=False)
+        return parse_round4_final_vote_response(response_text)
+    except Exception as e:
+        log.error("round4.vote_error", llm="claude", error=str(e))
+        raise

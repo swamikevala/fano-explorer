@@ -16,13 +16,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.state import StateManager, MAX_ACTIVE_WORK_AGE_SECONDS
-from src.queue import QueuedRequest, RequestQueue, QueueManager
-from src.models import SendRequest, SendOptions, SendResponse, Backend, Priority
-from src.workers import GeminiWorker, ChatGPTWorker
+from pool.src.state import StateManager, MAX_ACTIVE_WORK_AGE_SECONDS
+from pool.src.queue import QueuedRequest, RequestQueue, QueueManager
+from pool.src.models import SendRequest, SendOptions, SendResponse, Backend, Priority
+from pool.src.workers import GeminiWorker, ChatGPTWorker
 
 
 # =============================================================================

@@ -59,6 +59,7 @@ include = [
     "explorer*",
     "documenter*",
     "control*",
+    "researcher*",
 ]
 
 [tool.setuptools.package-data]
