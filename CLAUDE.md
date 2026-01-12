@@ -68,6 +68,64 @@ Every log event should include relevant context:
 - Use explicit variable names over clever abbreviations
 - Prefer clarity over brevity
 
+## Error Handling
+
+**Never use bare `except:` clauses** - they silently swallow KeyboardInterrupt and SystemExit.
+
+```python
+# Bad - catches everything including system signals
+try:
+    await page.wait_for_selector(selector)
+except:
+    continue
+
+# Good - specific exception
+try:
+    await page.wait_for_selector(selector)
+except TimeoutError:
+    continue
+
+# Acceptable - if you truly need to catch all errors
+try:
+    await risky_operation()
+except Exception as e:
+    log.error("operation.failed", error=str(e))
+```
+
+## File Size Guidelines
+
+- **Target:** Keep files under 400 lines
+- **Warning:** Files over 500 lines should be split
+- **Action required:** Files over 800 lines must be refactored
+
+When splitting large files:
+1. Group by responsibility (e.g., auth, sending, receiving)
+2. Create a package directory with `__init__.py` re-exporting public API
+3. Ensure existing imports continue to work
+
+## Type Hints
+
+All functions should have type hints for parameters and return values:
+
+```python
+# Good
+async def send_message(prompt: str, timeout: int = 30) -> str:
+    ...
+
+# Bad - missing return type
+async def send_message(prompt: str, timeout: int = 30):
+    ...
+```
+
+Use `TypedDict` for complex dictionary structures passed between functions.
+
+## Code Duplication
+
+When you see the same pattern repeated 3+ times, extract it:
+- Similar class methods → base class or mixin
+- Similar async workflows → shared utility function
+- Similar LLM interactions → executor/strategy pattern
+
 ## Common Commands
 
 ```bash
