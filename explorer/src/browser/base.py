@@ -22,6 +22,11 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+class AuthenticationRequired(Exception):
+    """Raised when browser session needs authentication."""
+    pass
+
 # Firewall authentication settings
 FIREWALL_DOMAIN = os.environ.get("FIREWALL_DOMAIN", "")
 FIREWALL_USERNAME = os.environ.get("FIREWALL_USERNAME", "")
@@ -201,6 +206,7 @@ async def authenticate_all():
     models_to_auth = [
         ("chatgpt", CONFIG["models"]["chatgpt"]["url"]),
         ("gemini", CONFIG["models"]["gemini"]["url"]),
+        ("claude", CONFIG["models"]["claude"]["url"]),
     ]
     
     for model, url in models_to_auth:
