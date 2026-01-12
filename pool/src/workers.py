@@ -527,10 +527,12 @@ class GeminiWorker(BaseWorker):
             if request.options.deep_mode:
                 deep_mode_used = await self._try_enable_deep_mode()
 
-            # Capture chat URL before sending message
+            # Capture chat URL before sending message - try reconnect if page is None
             if self.browser.page is None:
-                raise RuntimeError("Browser page not available - connection may have been lost")
-            chat_url = self.browser.page.url
+                log.warning("pool.worker.page_none", backend=self.backend_name, action="attempting_reconnect")
+                if not await self.try_reconnect():
+                    raise RuntimeError("Browser page not available and reconnection failed")
+            chat_url = self.browser.page.url if self.browser.page else "unknown"
 
             # Set up URL update callback - browser will call this when URL changes
             def on_url_change(new_url: str):
@@ -544,7 +546,8 @@ class GeminiWorker(BaseWorker):
                     options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
                 )
 
-            self.browser.set_url_update_callback(on_url_change)
+            if self.browser.page:
+                self.browser.set_url_update_callback(on_url_change)
 
             # Record active work so we can recover if pool restarts
             self.state.set_active_work(
@@ -698,10 +701,12 @@ class ChatGPTWorker(BaseWorker):
                 # (browser may remember Pro mode from previous session)
                 await self.browser.enable_thinking_mode()
 
-            # Capture chat URL before sending message
+            # Capture chat URL before sending message - try reconnect if page is None
             if self.browser.page is None:
-                raise RuntimeError("Browser page not available - connection may have been lost")
-            chat_url = self.browser.page.url
+                log.warning("pool.worker.page_none", backend=self.backend_name, action="attempting_reconnect")
+                if not await self.try_reconnect():
+                    raise RuntimeError("Browser page not available and reconnection failed")
+            chat_url = self.browser.page.url if self.browser.page else "unknown"
 
             # Set up URL update callback - browser will call this when URL changes
             def on_url_change(new_url: str):
@@ -715,7 +720,8 @@ class ChatGPTWorker(BaseWorker):
                     options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
                 )
 
-            self.browser.set_url_update_callback(on_url_change)
+            if self.browser.page:
+                self.browser.set_url_update_callback(on_url_change)
 
             # Record active work so we can recover if pool restarts
             self.state.set_active_work(
@@ -869,10 +875,12 @@ class ClaudeWorker(BaseWorker):
                 # Enable Extended Thinking as default mode (it's not as heavy as Pro/Deep Think)
                 await self.browser.enable_extended_thinking()
 
-            # Capture chat URL before sending message
+            # Capture chat URL before sending message - try reconnect if page is None
             if self.browser.page is None:
-                raise RuntimeError("Browser page not available - connection may have been lost")
-            chat_url = self.browser.page.url
+                log.warning("pool.worker.page_none", backend=self.backend_name, action="attempting_reconnect")
+                if not await self.try_reconnect():
+                    raise RuntimeError("Browser page not available and reconnection failed")
+            chat_url = self.browser.page.url if self.browser.page else "unknown"
 
             # Set up URL update callback - browser will call this when URL changes
             def on_url_change(new_url: str):
@@ -886,7 +894,8 @@ class ClaudeWorker(BaseWorker):
                     options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
                 )
 
-            self.browser.set_url_update_callback(on_url_change)
+            if self.browser.page:
+                self.browser.set_url_update_callback(on_url_change)
 
             # Record active work so we can recover if pool restarts
             self.state.set_active_work(
