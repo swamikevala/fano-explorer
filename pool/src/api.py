@@ -1,7 +1,6 @@
 """FastAPI HTTP API for the Browser Pool Service."""
 
 import asyncio
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -9,10 +8,6 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-
-# Add shared module to path
-SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
-sys.path.insert(0, str(SHARED_PATH.parent))
 
 from shared.logging import get_logger
 

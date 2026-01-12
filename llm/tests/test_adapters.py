@@ -3,19 +3,15 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.adapters import (
+from llm.src.adapters import (
     BrowserAdapter,
     GeminiAdapter,
     ChatGPTAdapter,
     ClaudeAdapter,
     create_adapters,
 )
-from src.client import LLMClient
-from src.models import LLMResponse
+from llm.src.client import LLMClient
+from llm.src.models import LLMResponse
 
 
 @pytest.fixture

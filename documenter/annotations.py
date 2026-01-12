@@ -6,15 +6,10 @@ Markers are HTML comments like: <!-- @ann:c001 -->
 """
 
 import json
-import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-
-# Add shared module to path
-SHARED_PATH = Path(__file__).resolve().parent.parent / "shared"
-sys.path.insert(0, str(SHARED_PATH.parent))
 
 from shared.logging import get_logger
 

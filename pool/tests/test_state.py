@@ -6,10 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.state import StateManager
+from pool.src.state import StateManager
 
 
 class TestStateManagerInit:

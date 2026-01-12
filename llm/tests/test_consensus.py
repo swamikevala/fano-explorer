@@ -3,13 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.consensus import ConsensusReviewer
-from src.client import LLMClient
-from src.models import LLMResponse, ConsensusResult, ReviewResponse
+from llm.src.consensus import ConsensusReviewer
+from llm.src.client import LLMClient
+from llm.src.models import LLMResponse, ConsensusResult, ReviewResponse
 
 
 @pytest.fixture

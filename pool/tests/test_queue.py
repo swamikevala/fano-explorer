@@ -5,11 +5,8 @@ import pytest
 from datetime import datetime
 from pathlib import Path
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.queue import QueuedRequest, RequestQueue, QueueManager, QueueFullError
-from src.models import SendRequest, SendOptions, Backend, Priority
+from pool.src.queue import QueuedRequest, RequestQueue, QueueManager, QueueFullError
+from pool.src.models import SendRequest, SendOptions, Backend, Priority
 
 
 @pytest.fixture

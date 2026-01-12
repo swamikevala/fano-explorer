@@ -6,21 +6,16 @@ Each worker manages a browser instance and processes requests from its queue.
 
 import asyncio
 import os
-import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
-# Add explorer's src to path so we can reuse browser automation
-EXPLORER_SRC = Path(__file__).resolve().parent.parent.parent / "explorer" / "src"
-sys.path.insert(0, str(EXPLORER_SRC))
-
-# Add shared module to path
-SHARED_PATH = Path(__file__).resolve().parent.parent.parent / "shared"
-sys.path.insert(0, str(SHARED_PATH.parent))
-
 from shared.logging import get_logger, set_session_id
+
+# Import browser modules from explorer - now available via proper package structure
+from explorer.src.browser.gemini import GeminiInterface
+from explorer.src.browser.chatgpt import ChatGPTInterface
 from .models import SendRequest, SendResponse, ResponseMetadata, Backend
 from .state import StateManager
 from .queue import RequestQueue, QueuedRequest
@@ -431,9 +426,6 @@ class GeminiWorker(BaseWorker):
     async def connect(self):
         """Connect to Gemini."""
         try:
-            # Import from explorer's browser module
-            from browser.gemini import GeminiInterface
-
             self.browser = GeminiInterface()
 
             # Override browser data dir to use pool's directory
@@ -461,8 +453,6 @@ class GeminiWorker(BaseWorker):
     async def authenticate(self):
         """Open browser for manual authentication."""
         try:
-            from browser.gemini import GeminiInterface
-
             # Create browser for auth
             browser = GeminiInterface()
             await browser.connect()
@@ -596,8 +586,6 @@ class ChatGPTWorker(BaseWorker):
     async def connect(self):
         """Connect to ChatGPT."""
         try:
-            from browser.chatgpt import ChatGPTInterface
-
             self.browser = ChatGPTInterface()
             await self.browser.connect()
             self.state.mark_authenticated(self.backend_name, True)
@@ -620,8 +608,6 @@ class ChatGPTWorker(BaseWorker):
     async def authenticate(self):
         """Open browser for manual authentication."""
         try:
-            from browser.chatgpt import ChatGPTInterface
-
             browser = ChatGPTInterface()
             await browser.connect()
             log.info("pool.worker.auth", action="browser_opened", backend=self.backend_name)

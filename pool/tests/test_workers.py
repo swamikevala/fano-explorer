@@ -7,13 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.workers import BaseWorker, GeminiWorker, ChatGPTWorker, ClaudeWorker
-from src.models import SendRequest, SendOptions, SendResponse, Backend, Priority
-from src.state import StateManager
-from src.queue import RequestQueue
+from pool.src.workers import BaseWorker, GeminiWorker, ChatGPTWorker, ClaudeWorker
+from pool.src.models import SendRequest, SendOptions, SendResponse, Backend, Priority
+from pool.src.state import StateManager
+from pool.src.queue import RequestQueue
 
 
 @pytest.fixture

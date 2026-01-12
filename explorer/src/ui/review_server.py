@@ -16,13 +16,10 @@ import markdown
 import yaml
 
 # Import models
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from chunking import AtomicInsight, InsightStatus
-from review_panel.models import ChunkReview, ReviewRound, ReviewResponse
-from augmentation import AugmentedInsight, Augmentation, AugmentationType
-from models.axiom import AxiomStore, SeedAphorism
+from explorer.src.chunking import AtomicInsight, InsightStatus
+from explorer.src.review_panel.models import ChunkReview, ReviewRound, ReviewResponse
+from explorer.src.augmentation import AugmentedInsight, Augmentation, AugmentationType
+from explorer.src.models.axiom import AxiomStore, SeedAphorism
 
 
 def render_markdown(text: str) -> str:
