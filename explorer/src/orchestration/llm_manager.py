@@ -13,11 +13,26 @@ import json
 import urllib.error
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Any
+
+import yaml
 
 from shared.logging import get_logger
 
 from llm import LLMClient, GeminiAdapter, ChatGPTAdapter
+
+
+def _get_pool_url() -> str:
+    """Load pool URL from config.yaml."""
+    config_path = Path(__file__).resolve().parent.parent.parent.parent / "config.yaml"
+    if config_path.exists():
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        pool_config = config.get("llm", {}).get("pool", {})
+        host = pool_config.get("host", "127.0.0.1")
+        port = pool_config.get("port", 9000)
+        return f"http://{host}:{port}"
+    return "http://127.0.0.1:9000"
 
 from explorer.src.browser import (
     rate_tracker,
@@ -65,7 +80,8 @@ class LLMManager:
         Returns:
             True if at least one model is available.
         """
-        self.llm_client = LLMClient()
+        pool_url = _get_pool_url()
+        self.llm_client = LLMClient(pool_url=pool_url)
 
         # Check if pool service is available
         pool_available = await self.llm_client.is_pool_available()

@@ -119,7 +119,9 @@ class Orchestrator:
         """
         self.running = True
         log.info("Starting exploration loop")
-        log.info("Review UI available at: http://localhost:8765")
+        review_host = self.config.get("review_server", {}).get("host", "127.0.0.1")
+        review_port = self.config.get("review_server", {}).get("port", 8765)
+        log.info(f"Review UI available at: http://{review_host}:{review_port}")
 
         # Connect to LLMs and initialize components
         await self._connect_and_initialize()

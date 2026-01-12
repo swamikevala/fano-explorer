@@ -164,9 +164,20 @@ def cmd_backlog():
 
 def cmd_review():
     """Start the review web interface."""
+    import yaml
     from explorer.src.ui.review_server import start_server
+
+    # Load review server config
+    config_path = Path(__file__).parent / "config.yaml"
+    host = "127.0.0.1"
+    port = 8765
+    if config_path.exists():
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        host = config.get("review_server", {}).get("host", host)
+        port = config.get("review_server", {}).get("port", port)
+
     console.print("\n[bold]Starting review server...[/bold]")
-    console.print("Open http://localhost:8765 in your browser.\n")
+    console.print(f"Open http://{host}:{port} in your browser.\n")
     console.print("Press Ctrl+C to stop.\n")
     start_server()
 
