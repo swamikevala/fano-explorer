@@ -584,26 +584,44 @@ class BaseLLMInterface:
         """
         copy_selectors = self.get_copy_button_selectors()
         if not copy_selectors:
-            log.debug("browser.clipboard.no_selectors", model=self.model_name)
+            log.info("browser.clipboard.no_selectors", model=self.model_name)
             return None
+
+        log.info(
+            "browser.clipboard.attempting",
+            model=self.model_name,
+            selectors_count=len(copy_selectors),
+        )
 
         try:
             # Hover over response to reveal copy button (some UIs hide until hover)
             await response_element.hover()
             await asyncio.sleep(0.3)
 
-            # Try each selector
+            # Try each selector - use page.locator() since response_element is ElementHandle
             for selector in copy_selectors:
                 try:
-                    # Look for copy button near/within response element
-                    copy_btn = response_element.locator(selector).first
-                    if await copy_btn.count() == 0:
-                        # Try finding button in parent/sibling areas
-                        copy_btn = self.page.locator(selector).last
-                        if await copy_btn.count() == 0:
-                            continue
+                    # Find copy button on the page (last one is usually for the most recent response)
+                    copy_btn = self.page.locator(selector).last
+                    btn_count = await copy_btn.count()
+                    if btn_count == 0:
+                        log.info(
+                            "browser.clipboard.selector_not_found",
+                            model=self.model_name,
+                            selector=selector,
+                        )
+                        continue
 
-                    if await copy_btn.is_visible(timeout=1000):
+                    is_visible = await copy_btn.is_visible(timeout=1000)
+                    log.info(
+                        "browser.clipboard.selector_check",
+                        model=self.model_name,
+                        selector=selector,
+                        count=btn_count,
+                        visible=is_visible,
+                    )
+
+                    if is_visible:
                         await copy_btn.click()
                         await asyncio.sleep(0.2)
 
@@ -617,10 +635,22 @@ class BaseLLMInterface:
                                 selector=selector,
                             )
                             return text.strip()
-                except Exception:
+                        else:
+                            log.info(
+                                "browser.clipboard.empty_clipboard",
+                                model=self.model_name,
+                                selector=selector,
+                            )
+                except Exception as e:
+                    log.info(
+                        "browser.clipboard.selector_error",
+                        model=self.model_name,
+                        selector=selector,
+                        error=str(e),
+                    )
                     continue
 
-            log.debug("browser.clipboard.no_button_found", model=self.model_name)
+            log.info("browser.clipboard.no_button_found", model=self.model_name)
             return None
 
         except Exception as e:

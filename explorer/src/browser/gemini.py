@@ -33,13 +33,16 @@ class GeminiInterface(BaseLLMInterface):
         self._deep_think_confirmation_done = False  # Track if we've handled confirmation
 
     def get_copy_button_selectors(self) -> list[str]:
-        """Gemini copy button selectors."""
+        """Gemini copy button selectors - must target response copy, not code block copy."""
         return [
-            'button[aria-label="Copy"]',
+            # Response action buttons are in a specific container
+            '.response-actions button[aria-label="Copy"]',
+            'message-actions button[aria-label="Copy"]',
+            '.model-response-actions button[aria-label="Copy"]',
+            # Generic fallbacks - use last to get most recent response's button
+            'button[aria-label="Copy response"]',
             'button[aria-label="Copy to clipboard"]',
             'button[mattooltip="Copy"]',
-            'button.copy-button',
-            'button:has(mat-icon:text("content_copy"))',
         ]
     
     async def connect(self):
@@ -307,7 +310,7 @@ class GeminiInterface(BaseLLMInterface):
                 log.warning(f"[gemini] Deep Think option not found. Menu items: {menu_texts[:20] if 'menu_texts' in dir() else 'N/A'}")
                 # Take screenshot for debugging
                 try:
-                    screenshot_path = self.chat_log.log_dir / "deep_think_menu_debug.png"
+                    screenshot_path = self.chat_logger.log_dir / "deep_think_menu_debug.png"
                     await self.page.screenshot(path=str(screenshot_path))
                     log.info(f"[gemini] Menu screenshot saved to: {screenshot_path}")
                 except Exception:
@@ -337,7 +340,7 @@ class GeminiInterface(BaseLLMInterface):
                 log.warning("[gemini] Deep Think clicked but NOT verified as active!")
                 # Try to take a screenshot for debugging
                 try:
-                    screenshot_path = self.chat_log.log_dir / "deep_think_debug.png"
+                    screenshot_path = self.chat_logger.log_dir / "deep_think_debug.png"
                     await self.page.screenshot(path=str(screenshot_path))
                     log.info(f"[gemini] Debug screenshot saved to: {screenshot_path}")
                 except Exception:
@@ -500,7 +503,7 @@ class GeminiInterface(BaseLLMInterface):
             await self._navigate_with_firewall_check("https://gemini.google.com/app")
 
             # Start a new logging session
-            session_id = self.chat_log.start_session()
+            session_id = self.chat_logger.start_session()
             print(f"[gemini] Started new chat (session: {session_id})")
 
         except Exception as e:
@@ -668,7 +671,7 @@ class GeminiInterface(BaseLLMInterface):
                 raise RateLimitError("Gemini rate limit detected")
 
             # Log the exchange locally
-            self.chat_log.log_exchange(message, response)
+            self.chat_logger.log_exchange(message, response)
 
             # Try to rename the chat with datetime (best effort)
             await self._try_rename_chat()
@@ -849,7 +852,7 @@ class GeminiInterface(BaseLLMInterface):
 
     async def _try_rename_chat(self):
         """Try to rename the current chat with session datetime (best effort)."""
-        session_id = self.chat_log.get_session_id()
+        session_id = self.chat_logger.get_session_id()
         if not session_id:
             return
 

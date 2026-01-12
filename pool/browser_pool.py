@@ -51,7 +51,7 @@ def cmd_start():
     host = config.get("server", {}).get("host", "127.0.0.1")
     port = config.get("server", {}).get("port", 9000)
 
-    logger.info(f"Starting Browser Pool on {host}:{port}")
+    log.info(f"Starting Browser Pool on {host}:{port}")
 
     # Import here to avoid circular imports
     from pool.src.api import create_app

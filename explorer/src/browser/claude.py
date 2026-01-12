@@ -177,7 +177,7 @@ class ClaudeInterface(BaseLLMInterface):
             await self._navigate_with_firewall_check("https://claude.ai/new")
 
             # Start a new logging session
-            session_id = self.chat_log.start_session()
+            session_id = self.chat_logger.start_session()
             print(f"[claude] Started new chat (session: {session_id})")
 
         except Exception as e:
@@ -380,7 +380,7 @@ class ClaudeInterface(BaseLLMInterface):
                 raise RateLimitError("Claude rate limit detected")
 
             # Log the exchange locally
-            self.chat_log.log_exchange(message, response)
+            self.chat_logger.log_exchange(message, response)
 
             print(f"[claude] Got response ({len(response)} chars)")
             return response
