@@ -1972,6 +1972,7 @@
         let currentPage = 'dashboard';
         let currentLogsSource = 'pool';
         let currentExplorerStatus = 'pending';
+        let viewingThreadDetail = false;
         let allLogs = [];
         let explorerStats = {};
 
@@ -1999,7 +2000,9 @@
             } else if (pageName === 'explorer') {
                 loadExplorerStats();
                 loadActiveThreadsCount();
-                loadExplorerInsights(currentExplorerStatus);
+                if (!viewingThreadDetail) {
+                    loadExplorerInsights(currentExplorerStatus);
+                }
             } else if (pageName === 'llm-activity') {
                 loadLLMActivityDetail();
             } else if (pageName === 'researcher') {
@@ -2511,11 +2514,9 @@
 
                 // Add click handlers using event delegation
                 container.querySelectorAll('.thread-item').forEach(item => {
-                    item.addEventListener('click', () => {
-                        const threadId = item.dataset.threadId;
-                        if (threadId) {
-                            viewThread(threadId);
-                        }
+                    item.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        viewThread(this.dataset.threadId);
                     });
                 });
 
@@ -2526,12 +2527,16 @@
         }
 
         async function viewThread(threadId) {
-            console.log('viewThread called with:', threadId);
+            // Set flag to prevent loadExplorerInsights from overwriting
+            viewingThreadDetail = true;
             // Switch to explorer page and show thread detail
             showPage('explorer');
 
             const container = document.getElementById('explorer-insights');
             container.innerHTML = '<div class="empty-state"><div class="icon loading">Loading thread...</div></div>';
+
+            // Scroll to the container
+            container.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             try {
                 const resp = await fetch(`/api/explorer/threads/${threadId}`);
@@ -2642,9 +2647,12 @@
 
                 container.innerHTML = html;
 
-                // Trigger MathJax for LaTeX rendering
+                // Scroll to show the thread detail
+                container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                // Trigger MathJax for LaTeX rendering (target just this container)
                 if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-                    MathJax.typesetPromise().catch(err => console.log('MathJax error:', err));
+                    MathJax.typesetPromise([container]).catch(err => console.log('MathJax error:', err));
                 }
 
             } catch (e) {
@@ -2700,6 +2708,7 @@
         }
 
         async function loadExplorerInsights(status) {
+            viewingThreadDetail = false;  // Reset flag when viewing insights
             currentExplorerStatus = status;
 
             // Update nav buttons
@@ -3370,11 +3379,43 @@
         function renderMarkdown(text) {
             if (!text) return '';
             try {
-                // Use marked.js if available, otherwise return escaped text
-                if (typeof marked !== 'undefined') {
-                    return marked.parse(text);
+                if (typeof marked === 'undefined') {
+                    return escapeHtml(text).replace(/\n/g, '<br>');
                 }
-                return escapeHtml(text).replace(/\n/g, '<br>');
+
+                // Protect LaTeX math from markdown processing
+                const mathBlocks = [];
+                let content = text;
+
+                // Save display math blocks ($$...$$ and \[...\])
+                content = content.replace(/\\\[[\s\S]*?\\\]/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                content = content.replace(/\$\$[\s\S]*?\$\$/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+
+                // Save inline math (\(...\) and $...$)
+                content = content.replace(/\\\(.*?\\\)/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+                content = content.replace(/\$(?!\$)([^\$\n]+)\$/g, match => {
+                    mathBlocks.push(match);
+                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                });
+
+                // Process markdown
+                let html = marked.parse(content);
+
+                // Restore math blocks after markdown processing
+                mathBlocks.forEach((math, i) => {
+                    html = html.replace(`%%MATH_${i}%%`, math);
+                });
+
+                return html;
             } catch (e) {
                 return escapeHtml(text).replace(/\n/g, '<br>');
             }
