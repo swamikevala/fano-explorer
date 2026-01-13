@@ -9,7 +9,9 @@ This module centralizes:
 - Unified message sending with deep mode support
 """
 
+import asyncio
 import json
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -73,6 +75,11 @@ class LLMManager:
         self.chatgpt: Optional[ChatGPTAdapter] = None
         self.gemini: Optional[GeminiAdapter] = None
 
+        # Connection state for reconnection logic
+        self._connection_lock = asyncio.Lock()
+        self._last_reconnect_attempt: float = 0.0
+        self._reconnect_cooldown: float = 30.0  # seconds between attempts
+
     async def connect(self) -> bool:
         """
         Connect to LLMs via the pool service.
@@ -120,6 +127,84 @@ class LLMManager:
             await self.gemini.disconnect()
         if self.llm_client:
             await self.llm_client.close()
+
+    async def ensure_connected(self) -> bool:
+        """
+        Ensure connected to pool, reconnecting if needed.
+
+        Call this before operations that require LLMs. If we're disconnected
+        (chatgpt and gemini are both None), this will attempt to reconnect.
+
+        Returns:
+            True if at least one model is available after this call.
+        """
+        # Fast path: already connected
+        if self.chatgpt is not None or self.gemini is not None:
+            return True
+
+        # Try to reconnect
+        return await self._try_reconnect()
+
+    async def _try_reconnect(self) -> bool:
+        """
+        Attempt to reconnect to the pool.
+
+        Uses a cooldown to prevent spamming reconnection attempts.
+
+        Returns:
+            True if reconnection succeeded and at least one model is available.
+        """
+        now = time.time()
+        if now - self._last_reconnect_attempt < self._reconnect_cooldown:
+            # Too soon since last attempt
+            return False
+
+        async with self._connection_lock:
+            # Double-check after acquiring lock (another task may have connected)
+            if self.chatgpt is not None or self.gemini is not None:
+                return True
+
+            self._last_reconnect_attempt = now
+            log.info("llm.manager.reconnect_attempt")
+
+            # Ensure we have a client
+            if self.llm_client is None:
+                pool_url = _get_pool_url()
+                self.llm_client = LLMClient(pool_url=pool_url)
+
+            # Check pool availability
+            try:
+                pool_available = await self.llm_client.is_pool_available()
+            except Exception as e:
+                log.warning("llm.manager.pool_check_failed", error=str(e))
+                return False
+
+            if not pool_available:
+                log.info("llm.manager.pool_unavailable")
+                return False
+
+            # Reconnect ChatGPT
+            try:
+                self.chatgpt = ChatGPTAdapter(self.llm_client)
+                await self.chatgpt.connect()
+                log.info("llm.manager.reconnected", backend="chatgpt")
+            except Exception as e:
+                log.warning("llm.manager.reconnect_failed", backend="chatgpt", error=str(e))
+                self.chatgpt = None
+
+            # Reconnect Gemini
+            try:
+                self.gemini = GeminiAdapter(self.llm_client)
+                await self.gemini.connect()
+                log.info("llm.manager.reconnected", backend="gemini")
+            except Exception as e:
+                log.warning("llm.manager.reconnect_failed", backend="gemini", error=str(e))
+                self.gemini = None
+
+            connected = self.chatgpt is not None or self.gemini is not None
+            if connected:
+                log.info("llm.manager.reconnection_successful")
+            return connected
 
     def get_available_models(self, check_rate_limits: bool = True) -> dict[str, Any]:
         """

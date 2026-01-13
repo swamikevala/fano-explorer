@@ -5,10 +5,16 @@ Thread-safe process management for Fano components.
 import subprocess
 import sys
 import threading
+import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional, TextIO
 
+from shared.logging import get_logger
 from .config import FANO_ROOT
+
+log = get_logger("control", "process_manager")
 
 # Central logs directory
 LOGS_DIR = FANO_ROOT / "logs"
@@ -21,6 +27,14 @@ class ProcessManager:
     Uses a lock to protect state access from concurrent requests and
     background threads (e.g., server restart).
     """
+
+    # Service dependencies - which services must be running before others can start
+    SERVICE_DEPENDENCIES = {
+        "pool": [],
+        "explorer": ["pool"],
+        "documenter": ["pool"],
+        "researcher": ["pool"],
+    }
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -182,3 +196,129 @@ class ProcessManager:
     def register_external(self, component: str, proc: subprocess.Popen):
         """Register an externally started process."""
         self.set(component, proc)
+
+    def wait_for_pool_health(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 9000,
+        timeout_seconds: int = 30,
+        poll_interval: float = 1.0,
+    ) -> bool:
+        """
+        Wait for pool /health endpoint to respond.
+
+        Args:
+            host: Pool host address
+            port: Pool port
+            timeout_seconds: Max time to wait
+            poll_interval: Time between checks
+
+        Returns:
+            True if pool became healthy within timeout, False otherwise.
+        """
+        start = time.time()
+        url = f"http://{host}:{port}/health"
+
+        while time.time() - start < timeout_seconds:
+            try:
+                with urllib.request.urlopen(url, timeout=2) as resp:
+                    if resp.status == 200:
+                        return True
+            except (urllib.error.URLError, TimeoutError, OSError):
+                pass
+            time.sleep(poll_interval)
+
+        return False
+
+    def check_dependencies_ready(self, component: str) -> tuple[bool, list[str]]:
+        """
+        Check if all dependencies for a component are running.
+
+        Args:
+            component: The component to check dependencies for
+
+        Returns:
+            Tuple of (all_ready, list_of_missing_dependencies)
+        """
+        deps = self.SERVICE_DEPENDENCIES.get(component, [])
+        missing = [d for d in deps if not self.is_running(d)]
+        return (len(missing) == 0, missing)
+
+    def start_with_deps(self, component: str, config: dict = None) -> bool:
+        """
+        Start a component after ensuring its dependencies are ready and healthy.
+
+        This method will:
+        1. Auto-start any missing dependencies
+        2. Wait for pool to be healthy (if it's a dependency)
+        3. Start the requested component
+
+        Args:
+            component: The component to start
+            config: Optional config dict for pool host/port/timeout settings
+
+        Returns:
+            True if component started successfully, False if dependencies failed.
+        """
+        deps = self.SERVICE_DEPENDENCIES.get(component, [])
+
+        for dep in deps:
+            if not self.is_running(dep):
+                # Auto-start the dependency
+                log.info(
+                    "process.dependency.auto_starting",
+                    component=component,
+                    dependency=dep,
+                )
+                if dep == "pool":
+                    self.start_pool()
+                elif dep == "explorer":
+                    self.start_explorer()
+                elif dep == "documenter":
+                    self.start_documenter()
+                elif dep == "researcher":
+                    self.start_researcher()
+
+            # Wait for pool to be healthy
+            if dep == "pool":
+                pool_config = (config or {}).get("llm", {}).get("pool", {})
+                host = pool_config.get("host", "127.0.0.1")
+                port = pool_config.get("port", 9000)
+                timeout = (
+                    (config or {})
+                    .get("services", {})
+                    .get("pool", {})
+                    .get("health_timeout_seconds", 30)
+                )
+
+                log.info(
+                    "process.dependency.waiting_for_health",
+                    component=component,
+                    dependency=dep,
+                    timeout=timeout,
+                )
+
+                if not self.wait_for_pool_health(host, port, timeout):
+                    log.error(
+                        "process.dependency.unhealthy",
+                        component=component,
+                        dependency=dep,
+                    )
+                    return False
+
+        # Now start the component itself
+        try:
+            if component == "pool":
+                return self.start_pool() is not None
+            elif component == "explorer":
+                return self.start_explorer() is not None
+            elif component == "documenter":
+                return self.start_documenter() is not None
+            elif component == "researcher":
+                return self.start_researcher() is not None
+            else:
+                log.warning("process.unknown_component", component=component)
+                return False
+        except Exception as e:
+            log.error("process.start_failed", component=component, error=str(e))
+            return False

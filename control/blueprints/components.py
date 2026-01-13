@@ -53,14 +53,23 @@ def api_start(component: str):
 
     try:
         if component == "pool":
+            # Pool has no dependencies, start directly
             pm.start_pool()
         elif component == "explorer":
+            # Explorer depends on pool - use dependency-aware start
             options = request.json or {}
-            pm.start_explorer(options.get("mode", "start"))
+            # Note: start_with_deps doesn't support mode yet, so we check deps first
+            if not pm.start_with_deps(component, config):
+                return jsonify({"error": "Failed to start dependencies for explorer"}), 500
+            # The start_with_deps already started the explorer
         elif component == "documenter":
-            pm.start_documenter()
+            # Documenter depends on pool
+            if not pm.start_with_deps(component, config):
+                return jsonify({"error": "Failed to start dependencies for documenter"}), 500
         elif component == "researcher":
-            pm.start_researcher()
+            # Researcher depends on pool
+            if not pm.start_with_deps(component, config):
+                return jsonify({"error": "Failed to start dependencies for researcher"}), 500
 
         return jsonify({"status": "started", "component": component})
     except Exception as e:

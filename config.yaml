@@ -41,12 +41,14 @@ llm:
 
     claude:
       enabled: true
-      type: "api"
-      api_key_env: "ANTHROPIC_API_KEY"
-      model: "claude-sonnet-4-20250514"
+      type: "browser"  # Uses playwright browser automation via pool
+      browser_data_dir: "./browser_data/claude"
+      url: "https://claude.ai"
+      response_timeout_seconds: 3600
       deep_mode:
-        model: "claude-sonnet-4-20250514"
         name: "Extended Thinking"
+        daily_limit: 100
+        reset_hour: 0
 
     openrouter:
       enabled: true
@@ -91,6 +93,20 @@ control:
   host: "127.0.0.1"
   port: 8080
   debug: true
+
+# =============================================================================
+# SERVICE DEPENDENCIES AND LIFECYCLE
+# =============================================================================
+services:
+  pool:
+    auto_start: true              # Start pool when control server starts
+    health_timeout_seconds: 30    # Max wait for healthy on startup
+  explorer:
+    depends_on: [pool]
+  documenter:
+    depends_on: [pool]
+  researcher:
+    depends_on: [pool]
 
 # =============================================================================
 # EXPLORER SETTINGS

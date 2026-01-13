@@ -299,6 +299,9 @@ class Orchestrator:
 
     async def _exploration_cycle(self):
         """Single cycle of the exploration loop."""
+        # Ensure we're connected to pool (reconnect if needed)
+        await self.llm_manager.ensure_connected()
+
         available_models = self.llm_manager.get_available_models()
         log.info(
             f"Available models: {list(available_models.keys())} "
