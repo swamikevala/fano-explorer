@@ -429,7 +429,7 @@ class ChatGPTInterface(BaseLLMInterface):
         import tempfile
         import os
 
-        print(f"[chatgpt] Uploading {len(images)} image(s)...")
+        log.info("browser.chatgpt.image_upload.started", image_count=len(images))
 
         try:
             # Find the file input element
@@ -444,7 +444,7 @@ class ChatGPTInterface(BaseLLMInterface):
             for selector in file_input_selectors:
                 file_input = await self.page.query_selector(selector)
                 if file_input:
-                    print(f"[chatgpt] Found file input: {selector}")
+                    log.debug("browser.chatgpt.image_upload.input_found", selector=selector)
                     break
 
             if not file_input:
@@ -461,7 +461,7 @@ class ChatGPTInterface(BaseLLMInterface):
                     try:
                         btn = await self.page.query_selector(selector)
                         if btn and await btn.is_visible():
-                            print(f"[chatgpt] Clicking attachment button: {selector}")
+                            log.debug("browser.chatgpt.image_upload.clicking_attachment", selector=selector)
                             await btn.click()
                             await asyncio.sleep(0.5)
 
@@ -476,16 +476,20 @@ class ChatGPTInterface(BaseLLMInterface):
                         continue
 
             if not file_input:
-                print(f"[chatgpt] WARNING: Could not find file input for image upload")
+                log.warning("browser.chatgpt.image_upload.no_file_input",
+                           image_count=len(images),
+                           tried_selectors=len(file_input_selectors))
                 return False
 
             # Create temporary files for each image
             temp_files = []
+            filenames = []
             try:
                 for img in images:
                     # Decode base64 data and write to temp file
                     image_data = base64.b64decode(img.data if hasattr(img, 'data') else img['data'])
                     filename = img.filename if hasattr(img, 'filename') else img['filename']
+                    filenames.append(filename)
 
                     # Determine extension from filename or media type
                     ext = os.path.splitext(filename)[1]
@@ -504,16 +508,15 @@ class ChatGPTInterface(BaseLLMInterface):
                     os.write(fd, image_data)
                     os.close(fd)
                     temp_files.append(temp_path)
-                    print(f"[chatgpt] Created temp file: {temp_path}")
 
                 # Upload all files at once using set_input_files
                 await file_input.set_input_files(temp_files)
-                print(f"[chatgpt] Uploaded {len(temp_files)} image(s)")
 
                 # Wait for upload to process
                 await asyncio.sleep(1.0)
 
                 # Check for image preview to confirm upload
+                preview_found = False
                 preview_selectors = [
                     "[data-testid='image-preview']",
                     "img[alt*='Uploaded']",
@@ -524,9 +527,13 @@ class ChatGPTInterface(BaseLLMInterface):
                 for selector in preview_selectors:
                     preview = await self.page.query_selector(selector)
                     if preview and await preview.is_visible():
-                        print(f"[chatgpt] Image preview detected: {selector}")
+                        preview_found = True
                         break
 
+                log.info("browser.chatgpt.image_upload.completed",
+                        image_count=len(temp_files),
+                        filenames=filenames,
+                        preview_detected=preview_found)
                 return True
 
             finally:
@@ -538,8 +545,10 @@ class ChatGPTInterface(BaseLLMInterface):
                         pass
 
         except Exception as e:
-            print(f"[chatgpt] Error uploading images: {e}")
-            log.error("browser.chatgpt.image_upload_failed", error=str(e))
+            log.error("browser.chatgpt.image_upload.failed",
+                     image_count=len(images),
+                     error_type=type(e).__name__,
+                     error=str(e))
             return False
 
     async def send_message(self, message: str, use_pro_mode: bool = False, use_thinking_mode: bool = False, images: list = None) -> str:
