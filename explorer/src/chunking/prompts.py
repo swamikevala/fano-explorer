@@ -10,6 +10,8 @@ then consolidates them to capture diverse perspectives and cross-domain bridges.
 
 from datetime import datetime
 
+from shared.prompts import MATH_FORMATTING_INSTRUCTION
+
 
 # =============================================================================
 # PANEL-BASED EXTRACTION PROMPTS (NEW)
@@ -105,6 +107,8 @@ BLESSED AXIOMS (already established):
 
 === EXPLORATION CONTENT ===
 {thread_context}
+
+{MATH_FORMATTING_INSTRUCTION}
 
 === OUTPUT FORMAT ===
 Extract up to {max_insights} insights. Format EXACTLY as:
@@ -410,6 +414,8 @@ BLESSED AXIOMS (available as foundations):
 === EXPLORATION CONTENT ===
 {thread_context}
 
+{MATH_FORMATTING_INSTRUCTION}
+
 === OUTPUT FORMAT ===
 Format your response EXACTLY as:
 
@@ -643,6 +649,8 @@ YOU MAY NOT:
 - Weaken the insight just to avoid criticism
 - Ignore valid critiques
 
+{MATH_FORMATTING_INSTRUCTION}
+
 RESPOND:
 
 REFINED_INSIGHT: [1-3 sentences, precise, standalone]
@@ -704,6 +712,8 @@ YOUR ORIGINAL CRITIQUE: {reviewer_original_critique}
 
 TASK:
 Evaluate the refined version. Has the refinement addressed the issues?
+
+{MATH_FORMATTING_INSTRUCTION}
 
 RESPOND:
 

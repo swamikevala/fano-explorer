@@ -6,6 +6,8 @@ couldn't reach consensus after 3 rounds. Shows full deliberation history
 and asks for modification proposals.
 """
 
+from shared.prompts import MATH_FORMATTING_INSTRUCTION
+
 
 def build_round4_modification_prompt(
     chunk_insight: str,
@@ -84,6 +86,8 @@ Consider:
 - What definition SHOULD the terms have to make something elegant emerge?
 - Is there a genuine discovery hiding behind the imprecise original wording?
 - What would make this feel INEVITABLE rather than arbitrary?
+
+{MATH_FORMATTING_INSTRUCTION}
 
 RESPOND IN THIS EXACT FORMAT:
 

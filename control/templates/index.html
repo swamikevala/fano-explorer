@@ -524,11 +524,60 @@
         }
 
         /* Explorer Page */
+        .explorer-sub-nav {
+            display: flex;
+            gap: 0;
+            margin-bottom: 1.5rem;
+            border-bottom: 2px solid var(--border-light);
+        }
+
+        .explorer-sub-tab {
+            padding: 1rem 2rem;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+        }
+
+        .explorer-sub-tab:hover {
+            color: var(--text);
+            background: var(--bg-card);
+        }
+
+        .explorer-sub-tab.active {
+            color: var(--text);
+            border-bottom-color: var(--highlight);
+        }
+
+        .explorer-sub-tab .count {
+            background: var(--bg-tertiary);
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            margin-left: 0.5rem;
+        }
+
+        .explorer-sub-tab.active .count {
+            background: var(--highlight);
+            color: white;
+        }
+
         .explorer-nav {
             display: flex;
             gap: 0.5rem;
             margin-bottom: 1.5rem;
             flex-wrap: wrap;
+            position: sticky;
+            top: var(--nav-height);
+            z-index: 100;
+            background: var(--bg-dark);
+            padding: 1rem 0;
+            margin-top: -1rem;
         }
 
         .explorer-nav-btn {
@@ -661,6 +710,74 @@
             padding-left: 1rem;
             margin: 0;
             color: var(--text);
+        }
+
+        /* LLM Response styling for math content */
+        .llm-response {
+            color: var(--text);
+        }
+        .llm-response p {
+            margin: 0 0 1rem 0;
+        }
+        .llm-response p:last-child {
+            margin-bottom: 0;
+        }
+        .llm-response h2, .llm-response h3, .llm-response h4 {
+            margin: 1.5rem 0 0.75rem 0;
+            color: var(--text);
+        }
+        .llm-response h2:first-child, .llm-response h3:first-child, .llm-response h4:first-child {
+            margin-top: 0;
+        }
+        .llm-response ul, .llm-response ol {
+            margin: 0.5rem 0;
+            padding-left: 1.5rem;
+        }
+        .llm-response li {
+            margin: 0.25rem 0;
+        }
+        .llm-response code {
+            background: var(--bg-tertiary);
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+        }
+        .llm-response pre {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        .llm-response pre code {
+            background: none;
+            padding: 0;
+        }
+        .llm-response strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+        .llm-response em {
+            font-style: italic;
+        }
+
+        /* Math content - same styling for any content with math */
+        .math-content {
+            color: var(--text);
+        }
+        .math-content p {
+            margin: 0 0 0.5rem 0;
+        }
+        .math-content p:last-child {
+            margin-bottom: 0;
+        }
+        .math-content code {
+            background: var(--bg-tertiary);
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
         }
 
         .modified-insight {
@@ -1687,47 +1804,61 @@
         <!-- Explorer Page -->
         <div id="page-explorer" class="page">
             <div class="container" style="max-width: 1100px;">
-                <div class="explorer-nav">
-                    <button class="explorer-nav-btn" data-status="reviewing" onclick="loadExplorerInsights('reviewing')">
-                        In Review <span class="count" id="exp-stat-reviewing">0</span>
+                <!-- Explorer Sub-navigation -->
+                <div class="explorer-sub-nav">
+                    <button class="explorer-sub-tab active" data-view="threads" onclick="showExplorerView('threads')">
+                        Active Threads <span class="count" id="threads-tab-count">0</span>
                     </button>
-                    <button class="explorer-nav-btn active" data-status="pending" onclick="loadExplorerInsights('pending')">
-                        Pending <span class="count" id="exp-stat-pending">0</span>
+                    <button class="explorer-sub-tab" data-view="insights" onclick="showExplorerView('insights')">
+                        Insights <span class="count" id="insights-tab-count">0</span>
                     </button>
-                    <button class="explorer-nav-btn disputed" data-status="disputed" onclick="loadExplorerInsights('disputed')">
-                        Disputed <span class="count" id="exp-stat-disputed">0</span>
-                    </button>
-                    <button class="explorer-nav-btn blessed" data-status="blessed" onclick="loadExplorerInsights('blessed')">
-                        Blessed <span class="count" id="exp-stat-blessed">0</span>
-                    </button>
-                    <button class="explorer-nav-btn interesting" data-status="interesting" onclick="loadExplorerInsights('interesting')">
-                        Interesting <span class="count" id="exp-stat-interesting">0</span>
-                    </button>
-                    <button class="explorer-nav-btn rejected" data-status="rejected" onclick="loadExplorerInsights('rejected')">
-                        Rejected <span class="count" id="exp-stat-rejected">0</span>
-                    </button>
-                    <div style="margin-left: auto;">
-                        <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
-                        <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                </div>
+
+                <!-- Active Threads View -->
+                <div id="explorer-threads-view">
+                    <div id="threads-list-container">
+                        <div id="active-threads-list">
+                            <div class="empty-state">
+                                <div class="icon">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="thread-detail-container" style="display: none;">
+                        <!-- Thread detail shown here when viewing a specific thread -->
                     </div>
                 </div>
 
-                <!-- Active Threads Section -->
-                <div id="active-threads-section" class="active-threads-section" style="margin-bottom: 1.5rem;">
-                    <div class="active-threads-header" onclick="toggleActiveThreads()" style="cursor: pointer; display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; background: var(--bg-card); border-radius: 8px; margin-bottom: 0.5rem;">
-                        <span id="active-threads-toggle" style="transition: transform 0.2s;">&#9654;</span>
-                        <strong>Active Threads</strong>
-                        <span class="count" id="active-threads-count" style="background: var(--primary); color: white; padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.8rem;">0</span>
-                        <span style="color: var(--text-dim); font-size: 0.85rem; margin-left: auto;">Click to expand</span>
+                <!-- Insights View -->
+                <div id="explorer-insights-view" style="display: none;">
+                    <div class="explorer-nav">
+                        <button class="explorer-nav-btn" data-status="reviewing" onclick="loadExplorerInsights('reviewing')">
+                            In Review <span class="count" id="exp-stat-reviewing">0</span>
+                        </button>
+                        <button class="explorer-nav-btn active" data-status="pending" onclick="loadExplorerInsights('pending')">
+                            Pending <span class="count" id="exp-stat-pending">0</span>
+                        </button>
+                        <button class="explorer-nav-btn disputed" data-status="disputed" onclick="loadExplorerInsights('disputed')">
+                            Disputed <span class="count" id="exp-stat-disputed">0</span>
+                        </button>
+                        <button class="explorer-nav-btn blessed" data-status="blessed" onclick="loadExplorerInsights('blessed')">
+                            Blessed <span class="count" id="exp-stat-blessed">0</span>
+                        </button>
+                        <button class="explorer-nav-btn interesting" data-status="interesting" onclick="loadExplorerInsights('interesting')">
+                            Interesting <span class="count" id="exp-stat-interesting">0</span>
+                        </button>
+                        <button class="explorer-nav-btn rejected" data-status="rejected" onclick="loadExplorerInsights('rejected')">
+                            Rejected <span class="count" id="exp-stat-rejected">0</span>
+                        </button>
+                        <div style="margin-left: auto;">
+                            <button class="btn btn-secondary" onclick="expandAllInsights()">Expand All</button>
+                            <button class="btn btn-secondary" onclick="collapseAllInsights()">Collapse All</button>
+                        </div>
                     </div>
-                    <div id="active-threads-list" style="display: none;">
-                        <!-- Threads will be loaded here -->
-                    </div>
-                </div>
 
-                <div id="explorer-insights">
-                    <div class="empty-state">
-                        <div class="icon">Loading...</div>
+                    <div id="explorer-insights">
+                        <div class="empty-state">
+                            <div class="icon">Loading...</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1968,11 +2099,21 @@
     <div id="annotation-tooltip" class="annotation-tooltip"></div>
 
     <script>
+        // Configure marked.js for better math compatibility
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({
+                breaks: true,  // Convert \n to <br>
+                gfm: true,     // GitHub Flavored Markdown
+                headerIds: false,
+                mangle: false
+            });
+        }
+
         // Current state
         let currentPage = 'dashboard';
         let currentLogsSource = 'pool';
         let currentExplorerStatus = 'pending';
-        let viewingThreadDetail = false;
+        let currentExplorerView = 'threads';  // 'threads' or 'insights'
         let allLogs = [];
         let explorerStats = {};
 
@@ -1999,8 +2140,10 @@
                 loadFullLogs(currentLogsSource);
             } else if (pageName === 'explorer') {
                 loadExplorerStats();
-                loadActiveThreadsCount();
-                if (!viewingThreadDetail) {
+                // Load the current view (threads or insights)
+                if (currentExplorerView === 'threads') {
+                    loadActiveThreads();
+                } else {
                     loadExplorerInsights(currentExplorerStatus);
                 }
             } else if (pageName === 'llm-activity') {
@@ -2426,85 +2569,106 @@
                 document.getElementById('exp-stat-blessed').textContent = explorerStats.blessed || 0;
                 document.getElementById('exp-stat-interesting').textContent = explorerStats.interesting || 0;
                 document.getElementById('exp-stat-rejected').textContent = explorerStats.rejected || 0;
+
+                // Update insights tab count (total across all statuses)
+                const totalInsights = (explorerStats.pending || 0) + (explorerStats.blessed || 0) +
+                                     (explorerStats.interesting || 0) + (explorerStats.rejected || 0) +
+                                     (explorerStats.reviewing || 0) + (explorerStats.disputed || 0);
+                const insightsTabCount = document.getElementById('insights-tab-count');
+                if (insightsTabCount) insightsTabCount.textContent = totalInsights;
             } catch (e) {
                 console.error('Failed to load explorer stats:', e);
             }
         }
 
-        let activeThreadsExpanded = false;
+        function showExplorerView(view) {
+            currentExplorerView = view;
+
+            // Update sub-tab buttons
+            document.querySelectorAll('.explorer-sub-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.view === view);
+            });
+
+            // Show/hide views
+            document.getElementById('explorer-threads-view').style.display = view === 'threads' ? 'block' : 'none';
+            document.getElementById('explorer-insights-view').style.display = view === 'insights' ? 'block' : 'none';
+
+            // Load content for the view
+            if (view === 'threads') {
+                loadActiveThreads();
+            } else {
+                loadExplorerInsights(currentExplorerStatus);
+            }
+        }
 
         async function loadActiveThreadsCount() {
             try {
                 const resp = await fetch('/api/explorer/threads/active');
                 const data = await resp.json();
-                document.getElementById('active-threads-count').textContent = data.count || 0;
-                // If expanded, refresh the full list too
-                if (activeThreadsExpanded) {
-                    loadActiveThreads();
-                }
+                // Update both the tab count and any other count elements
+                const tabCount = document.getElementById('threads-tab-count');
+                if (tabCount) tabCount.textContent = data.count || 0;
             } catch (e) {
                 console.error('Failed to load active threads count:', e);
             }
         }
 
-        function toggleActiveThreads() {
-            activeThreadsExpanded = !activeThreadsExpanded;
-            const list = document.getElementById('active-threads-list');
-            const toggle = document.getElementById('active-threads-toggle');
-
-            if (activeThreadsExpanded) {
-                list.style.display = 'block';
-                toggle.style.transform = 'rotate(90deg)';
-                loadActiveThreads();
-            } else {
-                list.style.display = 'none';
-                toggle.style.transform = 'rotate(0deg)';
-            }
-        }
-
         async function loadActiveThreads() {
             const container = document.getElementById('active-threads-list');
-            const countEl = document.getElementById('active-threads-count');
+            const listContainer = document.getElementById('threads-list-container');
+            const detailContainer = document.getElementById('thread-detail-container');
+
+            // Show list, hide detail
+            listContainer.style.display = 'block';
+            detailContainer.style.display = 'none';
 
             try {
                 const resp = await fetch('/api/explorer/threads/active');
                 const data = await resp.json();
 
-                countEl.textContent = data.count || 0;
+                // Update tab count
+                const tabCount = document.getElementById('threads-tab-count');
+                if (tabCount) tabCount.textContent = data.count || 0;
 
                 if (data.threads.length === 0) {
-                    container.innerHTML = `<div style="padding: 1rem; color: var(--text-dim); text-align: center;">No active threads</div>`;
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="icon">🔭</div>
+                            <h2>No Active Threads</h2>
+                            <p>Start the explorer to begin mathematical exploration</p>
+                        </div>`;
                     return;
                 }
 
-                let html = '<div style="display: flex; flex-direction: column; gap: 0.5rem;">';
+                let html = '<div style="display: flex; flex-direction: column; gap: 0.75rem;">';
 
                 for (const thread of data.threads) {
                     const activityIcon = thread.current_activity === 'needs critique' ? '🔍' :
                                         thread.current_activity === 'needs exploration' ? '🔭' : '⏳';
                     const modelBadge = thread.last_model ?
-                        `<span style="background: var(--bg-secondary); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">${thread.last_model}</span>` : '';
+                        `<span style="background: var(--bg-tertiary); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">${thread.last_model}</span>` : '';
 
                     const priorityColor = thread.priority >= 7 ? 'var(--success)' :
                                          thread.priority >= 4 ? 'var(--warning)' : 'var(--text-dim)';
 
                     html += `
-                        <div class="thread-item" data-thread-id="${thread.id}" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px; border-left: 3px solid ${priorityColor}; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='var(--bg-secondary)'">
-                            <span style="font-size: 1.2rem;">${activityIcon}</span>
+                        <div class="thread-card" data-thread-id="${thread.id}" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; background: var(--bg-card); border-radius: 10px; border-left: 4px solid ${priorityColor}; cursor: pointer; transition: all 0.2s;">
+                            <span style="font-size: 1.5rem;">${activityIcon}</span>
                             <div style="flex: 1; min-width: 0;">
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
-                                    <code style="font-size: 0.8rem; color: var(--primary);">${thread.id}</code>
+                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                    <code style="font-size: 0.85rem; color: var(--highlight);">${thread.id}</code>
                                     ${modelBadge}
-                                    <span style="color: var(--text-dim); font-size: 0.75rem; margin-left: auto;">${thread.time_ago}</span>
+                                    <span style="color: var(--text-dim); font-size: 0.8rem; margin-left: auto;">${thread.time_ago}</span>
                                 </div>
-                                <div style="font-size: 0.85rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${thread.topic}">
-                                    ${thread.focus ? `<strong>${thread.focus}</strong> - ` : ''}${thread.topic}
+                                <div style="font-size: 1rem; color: var(--text); margin-bottom: 0.35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${thread.topic}">
+                                    ${thread.focus ? `<strong style="color: var(--interesting);">${thread.focus}</strong> — ` : ''}${thread.topic}
                                 </div>
-                                <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.25rem;">
-                                    ${thread.current_activity} · ${thread.exchange_count} exchanges · P${thread.priority}
+                                <div style="font-size: 0.85rem; color: var(--text-dim);">
+                                    <span style="color: ${thread.current_activity === 'needs critique' ? 'var(--warning)' : 'var(--success)'}">${thread.current_activity}</span>
+                                    · ${thread.exchange_count} exchanges · Priority ${thread.priority}
                                 </div>
                             </div>
-                            <span style="color: var(--text-dim); font-size: 1rem;">›</span>
+                            <span style="color: var(--text-dim); font-size: 1.25rem;">›</span>
                         </div>
                     `;
                 }
@@ -2512,41 +2676,47 @@
                 html += '</div>';
                 container.innerHTML = html;
 
-                // Add click handlers using event delegation
-                container.querySelectorAll('.thread-item').forEach(item => {
-                    item.addEventListener('click', function(e) {
-                        e.stopPropagation();
+                // Add click handlers
+                container.querySelectorAll('.thread-card').forEach(item => {
+                    item.addEventListener('click', function() {
                         viewThread(this.dataset.threadId);
+                    });
+                    item.addEventListener('mouseover', function() {
+                        this.style.background = 'var(--bg-tertiary)';
+                    });
+                    item.addEventListener('mouseout', function() {
+                        this.style.background = 'var(--bg-card)';
                     });
                 });
 
             } catch (e) {
                 console.error('Failed to load active threads:', e);
-                container.innerHTML = `<div style="padding: 1rem; color: var(--error);">Failed to load threads: ${e}</div>`;
+                container.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>Failed to load threads: ${e}</p></div>`;
             }
         }
 
         async function viewThread(threadId) {
-            // Set flag to prevent loadExplorerInsights from overwriting
-            viewingThreadDetail = true;
-            // Switch to explorer page and show thread detail
-            showPage('explorer');
+            const listContainer = document.getElementById('threads-list-container');
+            const detailContainer = document.getElementById('thread-detail-container');
 
-            const container = document.getElementById('explorer-insights');
-            container.innerHTML = '<div class="empty-state"><div class="icon loading">Loading thread...</div></div>';
+            // Hide list, show detail
+            listContainer.style.display = 'none';
+            detailContainer.style.display = 'block';
+            detailContainer.innerHTML = '<div class="empty-state"><div class="icon loading">Loading thread...</div></div>';
 
-            // Scroll to the container
-            container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Scroll to top
+            detailContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             try {
                 const resp = await fetch(`/api/explorer/threads/${threadId}`);
                 const data = await resp.json();
 
                 if (data.error) {
-                    container.innerHTML = `<div class="empty-state">
+                    detailContainer.innerHTML = `<div class="empty-state">
                         <div class="icon">🔍</div>
                         <h2>Thread not found</h2>
                         <p>${data.error}</p>
+                        <button class="btn btn-secondary" onclick="loadActiveThreads()">← Back to Threads</button>
                     </div>`;
                     return;
                 }
@@ -2557,20 +2727,19 @@
 
                 // Build the thread detail view
                 let html = `
-                    <div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-card); border-radius: 8px; display: flex; align-items: center; gap: 1rem;">
-                        <a href="#" onclick="loadExplorerInsights(currentExplorerStatus || 'pending'); return false;" style="color: var(--primary); text-decoration: none;">← Back to Insights</a>
+                    <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--bg-card); border-radius: 8px; display: flex; align-items: center; gap: 1rem;">
+                        <a href="#" onclick="loadActiveThreads(); return false;" style="color: var(--highlight); text-decoration: none; font-weight: 500;">← Back to Threads</a>
                         <span style="color: var(--text-dim);">|</span>
-                        <span style="color: var(--text-dim);">Thread Detail:</span>
-                        <code style="color: var(--primary);">${thread.id}</code>
-                        <span style="padding: 0.25rem 0.5rem; background: ${thread.status === 'active' ? 'var(--success)' : 'var(--warning)'}; color: var(--bg-dark); border-radius: 4px; font-size: 0.8rem; font-weight: bold;">${thread.status.toUpperCase()}</span>
+                        <code style="color: var(--text-dim);">${thread.id}</code>
+                        <span style="padding: 0.25rem 0.75rem; background: ${thread.status === 'active' ? 'var(--success)' : 'var(--warning)'}; color: var(--bg-dark); border-radius: 4px; font-size: 0.8rem; font-weight: bold;">${thread.status.toUpperCase()}</span>
                     </div>
 
                     <!-- Thread Info Card -->
                     <div style="background: var(--bg-card); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem;">
-                        <h2 style="margin-bottom: 1rem; color: var(--text);">${thread.topic}</h2>
+                        <h2 style="margin: 0 0 1rem 0; color: var(--text);">${thread.topic}</h2>
 
                         ${thread.focus_seed_text ? `
-                        <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid var(--primary);">
+                        <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid var(--highlight);">
                             <div style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.5rem;">Focus Question/Conjecture</div>
                             <div style="color: var(--text);">${thread.focus_seed_text}</div>
                         </div>
@@ -2636,8 +2805,8 @@
 
                                 <!-- Response -->
                                 <div style="padding: 1rem;">
-                                    <div class="markdown-content" style="font-size: 0.95rem; line-height: 1.6;">
-                                        ${renderMarkdown(ex.response)}
+                                    <div class="llm-response" style="font-size: 0.95rem; line-height: 1.6;">
+                                        ${renderLLMResponse(ex.response)}
                                     </div>
                                 </div>
                             </div>
@@ -2645,21 +2814,23 @@
                     }
                 }
 
-                container.innerHTML = html;
+                detailContainer.innerHTML = html;
 
                 // Scroll to show the thread detail
-                container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                detailContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-                // Trigger MathJax for LaTeX rendering (target just this container)
+                // Trigger MathJax for LaTeX rendering
                 if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-                    MathJax.typesetPromise([container]).catch(err => console.log('MathJax error:', err));
+                    MathJax.typesetPromise([detailContainer]).catch(err => console.log('MathJax error:', err));
                 }
 
             } catch (e) {
                 console.error('Failed to load thread:', e);
-                container.innerHTML = `<div class="empty-state">
-                    <div class="icon">Error</div>
-                    <p>Failed to load thread: ${e}</p>
+                detailContainer.innerHTML = `<div class="empty-state">
+                    <div class="icon">⚠️</div>
+                    <h2>Error Loading Thread</h2>
+                    <p>${e}</p>
+                    <button class="btn btn-secondary" onclick="loadActiveThreads()">← Back to Threads</button>
                 </div>`;
             }
         }
@@ -2708,7 +2879,6 @@
         }
 
         async function loadExplorerInsights(status) {
-            viewingThreadDetail = false;  // Reset flag when viewing insights
             currentExplorerStatus = status;
 
             // Update nav buttons
@@ -2840,11 +3010,11 @@
                     </div>
                     <div class="insight-body">
                         <div class="insight-content">
-                            <blockquote>${text}</blockquote>
+                            <blockquote class="math-content">${renderLLMResponse(text)}</blockquote>
                             ${isModified ? `
                                 <div class="modified-insight">
                                     <div class="modified-insight-label">✨ Modified Version (accepted)</div>
-                                    <blockquote>${review.final_insight_text}</blockquote>
+                                    <blockquote class="math-content">${renderLLMResponse(review.final_insight_text)}</blockquote>
                                 </div>
                             ` : ''}
                         </div>
@@ -2868,8 +3038,8 @@
                             <span class="reviewer-name">${llm}</span>
                             <span class="reviewer-rating">${resp.rating || ''}</span>
                         </div>
-                        <div class="reviewer-content">
-                            ${resp.reasoning ? `<p><strong>Reasoning:</strong> ${resp.reasoning}</p>` : ''}
+                        <div class="reviewer-content math-content">
+                            ${resp.reasoning ? `<div><strong>Reasoning:</strong> ${renderLLMResponse(resp.reasoning)}</div>` : ''}
                         </div>
                     </div>
                 `;
@@ -3376,6 +3546,56 @@
             return div.innerHTML;
         }
 
+        // Render LLM response with math support - minimal processing to preserve LaTeX
+        function renderLLMResponse(text) {
+            if (!text) return '';
+
+            let html = text
+                // Normalize math delimiters FIRST (before any escaping)
+                // Handle various escape levels: \( or \\( -> $
+                .replace(/\\+\(/g, '$')
+                .replace(/\\+\)/g, '$')
+                // Handle \[ \] -> $$
+                .replace(/\\+\[/g, '$$')
+                .replace(/\\+\]/g, '$$')
+                // Handle malformed "( \command ... )" pattern - but be conservative
+                // Only match when there's clear LaTeX like \mathcal, \frac, \text, etc.
+                // Use non-greedy matching and limit scope to 150 chars
+                .replace(/\((\s*\\(?:mathcal|mathrm|mathbb|mathbf|frac|text|textbf|cong|times|cdot|pi|Pi|Phi|phi|sigma|Sigma|in|infty|sum|prod|int|sqrt|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|omega|partial|nabla|leftrightarrow|rightarrow|leftarrow|subset|supset|cup|cap|forall|exists|neq|leq|geq|approx|equiv|sim|propto|pm|mp)[^)]{0,150})\)/g, '$$$1$')
+                // Escape HTML entities except for math delimiters
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                // Extract math/latex code blocks - DON'T wrap in <code> so MathJax can process
+                .replace(/```(?:latex|math)\s*\n([\s\S]*?)```/gi, (match, content) => {
+                    // Just return the content with the math delimiters preserved
+                    return '\n' + content.trim() + '\n';
+                })
+                // Convert other code blocks (```) to pre/code
+                .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+                // Don't convert single backticks if they contain $ (might be math)
+                .replace(/`([^`$]+)`/g, '<code>$1</code>')
+                // Convert **bold**
+                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                // Convert *italic*
+                .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+                // Convert headers
+                .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+                .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+                .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+                // Convert bullet lists
+                .replace(/^- (.+)$/gm, '<li>$1</li>')
+                .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+                // Convert numbered lists
+                .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+                // Double newlines to paragraph breaks
+                .replace(/\n\n+/g, '</p><p>')
+                // Single newlines to <br>
+                .replace(/\n/g, '<br>');
+
+            return '<p>' + html + '</p>';
+        }
+
         function renderMarkdown(text) {
             if (!text) return '';
             try {
@@ -3383,40 +3603,54 @@
                     return escapeHtml(text).replace(/\n/g, '<br>');
                 }
 
-                // Protect LaTeX math from markdown processing
+                // Protect LaTeX math from markdown processing using unique tokens
                 const mathBlocks = [];
                 let content = text;
 
                 // Save display math blocks ($$...$$ and \[...\])
                 content = content.replace(/\\\[[\s\S]*?\\\]/g, match => {
+                    const idx = mathBlocks.length;
                     mathBlocks.push(match);
-                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                    return `MATHBLOCK${idx}ENDMATH`;
                 });
-                content = content.replace(/\$\$[\s\S]*?\$\$/g, match => {
+                content = content.replace(/\$\$([\s\S]*?)\$\$/g, match => {
+                    const idx = mathBlocks.length;
                     mathBlocks.push(match);
-                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                    return `MATHBLOCK${idx}ENDMATH`;
                 });
 
-                // Save inline math (\(...\) and $...$)
-                content = content.replace(/\\\(.*?\\\)/g, match => {
+                // Save inline math (\(...\) and $...$) - be more careful with single $
+                content = content.replace(/\\\(([\s\S]*?)\\\)/g, match => {
+                    const idx = mathBlocks.length;
                     mathBlocks.push(match);
-                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                    return `MATHBLOCK${idx}ENDMATH`;
                 });
-                content = content.replace(/\$(?!\$)([^\$\n]+)\$/g, match => {
+                // Match single $ but not $$ and not currency like $100
+                content = content.replace(/\$([^\$\s][^\$]*?[^\$\s])\$/g, match => {
+                    const idx = mathBlocks.length;
                     mathBlocks.push(match);
-                    return `%%MATH_${mathBlocks.length - 1}%%`;
+                    return `MATHBLOCK${idx}ENDMATH`;
+                });
+                // Also match short inline math like $x$
+                content = content.replace(/\$([a-zA-Z0-9\\])\$/g, match => {
+                    const idx = mathBlocks.length;
+                    mathBlocks.push(match);
+                    return `MATHBLOCK${idx}ENDMATH`;
                 });
 
                 // Process markdown
                 let html = marked.parse(content);
 
                 // Restore math blocks after markdown processing
+                // Need to handle case where markdown might have wrapped in <p> tags
                 mathBlocks.forEach((math, i) => {
-                    html = html.replace(`%%MATH_${i}%%`, math);
+                    // Replace both the raw token and any HTML-escaped version
+                    html = html.replace(new RegExp(`MATHBLOCK${i}ENDMATH`, 'g'), math);
                 });
 
                 return html;
             } catch (e) {
+                console.error('Markdown render error:', e);
                 return escapeHtml(text).replace(/\n/g, '<br>');
             }
         }
@@ -3901,12 +4135,6 @@
                     </div>`;
             }
             content.innerHTML = html;
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
         }
 
         function showToast(message) {

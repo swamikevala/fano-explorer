@@ -7,6 +7,8 @@ responses and re-evaluates with extended reasoning.
 
 from typing import Optional, TYPE_CHECKING
 
+from shared.prompts import MATH_FORMATTING_INSTRUCTION
+
 if TYPE_CHECKING:
     from ..models import VerificationResult
 
@@ -117,6 +119,8 @@ you missed. But do not lower your standards - only change if genuinely persuaded
 
 If you see a way to FIX the insight (different wording, corrected definition, etc.)
 that would make it valid, you may propose a modification.
+
+{MATH_FORMATTING_INSTRUCTION}
 
 RESPOND IN THIS EXACT FORMAT:
 

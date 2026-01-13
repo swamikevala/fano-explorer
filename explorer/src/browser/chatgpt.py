@@ -541,6 +541,10 @@ class ChatGPTInterface(BaseLLMInterface):
         start_time = datetime.now()
         last_response = ""
         stable_count = 0
+        network_error_count = 0
+        max_recovery_attempts = 3
+        last_network_check = datetime.now()
+        network_check_interval = 30  # Check for network errors every 30 seconds
 
         # Selectors for assistant messages
         response_selectors = [
@@ -550,9 +554,41 @@ class ChatGPTInterface(BaseLLMInterface):
         ]
 
         while (datetime.now() - start_time).seconds < timeout:
+            # Periodically check for network errors (every 30 seconds)
+            if (datetime.now() - last_network_check).seconds >= network_check_interval:
+                last_network_check = datetime.now()
+                network_error = await self.check_for_network_error()
+                if network_error:
+                    network_error_count += 1
+                    print(f"[chatgpt] Network error detected ({network_error_count}/{max_recovery_attempts}): {network_error[:50]}")
+
+                    if network_error_count <= max_recovery_attempts:
+                        # Attempt recovery
+                        recovered = await self.recover_from_error()
+                        if recovered:
+                            print(f"[chatgpt] Recovery attempt {network_error_count} successful, continuing to wait...")
+                            # Reset stability tracking after recovery
+                            stable_count = 0
+                            await asyncio.sleep(5)  # Give page time to settle
+
+                            # Check if response appeared after refresh
+                            response_after_refresh = await self.try_get_response()
+                            if response_after_refresh:
+                                print(f"[chatgpt] Found response after recovery ({len(response_after_refresh)} chars)")
+                                return response_after_refresh
+
+                            continue
+                        else:
+                            print(f"[chatgpt] Recovery attempt {network_error_count} failed")
+                    else:
+                        print(f"[chatgpt] Max recovery attempts reached, giving up")
+                        if last_response:
+                            return last_response.strip()
+                        raise ConnectionError(f"ChatGPT network error after {max_recovery_attempts} recovery attempts: {network_error}")
+
             for selector in response_selectors:
                 messages = await self.page.query_selector_all(selector)
-                
+
                 if messages:
                     # Get the last message
                     last_msg = messages[-1]
@@ -574,9 +610,9 @@ class ChatGPTInterface(BaseLLMInterface):
                         stable_count = 0
                         last_response = current_response
                     break
-            
+
             await asyncio.sleep(1)
-        
+
         # Timeout - return whatever we have
         if last_response:
             print(f"[chatgpt] Timeout reached, returning partial response")
@@ -694,6 +730,112 @@ class ChatGPTInterface(BaseLLMInterface):
             except Exception:
                 continue
         return False
+
+    async def check_for_network_error(self) -> Optional[str]:
+        """
+        Check if ChatGPT is showing a network error or stalled state.
+
+        Returns:
+            Error message if network error detected, None otherwise.
+        """
+        try:
+            # First, do a quick check of page text for known error patterns
+            try:
+                # Use a limited area to avoid performance issues
+                main_content = await self.page.query_selector("main, #__next, body")
+                if main_content:
+                    page_text = await main_content.inner_text()
+
+                    # Check for network connection lost
+                    if "Network connection lost" in page_text:
+                        log.warning("browser.chatgpt.network_error_detected", error_type="network_lost")
+                        return "Network connection lost"
+
+                    # Check for reconnection message
+                    if "Attempting to reconnect" in page_text:
+                        log.warning("browser.chatgpt.network_error_detected", error_type="reconnecting")
+                        return "Attempting to reconnect"
+
+                    # Check for stalled thinking with no progress
+                    # "Stopped Thinking" or "Stopped thinking" indicates the model halted
+                    if "Stopped Thinking" in page_text or "Stopped thinking" in page_text:
+                        # This is a stalled state - the thinking process stopped unexpectedly
+                        log.warning("browser.chatgpt.stalled_thinking_detected")
+                        return "Stopped Thinking - generation stalled"
+
+                    # Generic error messages
+                    if "Something went wrong" in page_text:
+                        log.warning("browser.chatgpt.network_error_detected", error_type="something_wrong")
+                        return "Something went wrong"
+
+            except Exception as e:
+                log.debug("browser.chatgpt.network_check_text_error", error=str(e))
+
+            # Check for alert role elements (toast notifications)
+            try:
+                alerts = await self.page.query_selector_all("[role='alert']")
+                for alert in alerts:
+                    if await alert.is_visible():
+                        alert_text = await alert.inner_text()
+                        if any(kw in alert_text.lower() for kw in ['network', 'connection', 'error', 'reconnect', 'wrong']):
+                            log.warning("browser.chatgpt.alert_detected", message=alert_text[:100])
+                            return alert_text[:200]
+            except Exception:
+                pass
+
+            # Check if generating appears to be stuck (stop button visible but no response changing)
+            # This is handled by the main wait loop's stability check, so skip here
+
+            return None
+
+        except Exception as e:
+            log.debug("browser.chatgpt.network_check_error", error=str(e))
+            return None
+
+    async def recover_from_error(self) -> bool:
+        """
+        Attempt to recover from a network error by refreshing the page.
+
+        Returns:
+            True if recovery succeeded and we can continue, False otherwise.
+        """
+        try:
+            log.info("browser.chatgpt.recovery.starting")
+            print("[chatgpt] Network error detected, attempting recovery...")
+
+            # Get current URL before refresh
+            current_url = self.page.url
+            log.info("browser.chatgpt.recovery.current_url", url=current_url)
+
+            # Refresh the page
+            print("[chatgpt] Refreshing page...")
+            await self.page.reload(wait_until="networkidle")
+            await asyncio.sleep(3)
+
+            # Wait for interface to be ready again
+            await self._wait_for_ready(timeout=30)
+
+            # Check if we're still on a conversation page
+            new_url = self.page.url
+            if "/c/" in new_url:
+                print(f"[chatgpt] Recovery successful, still on conversation: {new_url}")
+                log.info("browser.chatgpt.recovery.success", url=new_url)
+                return True
+            else:
+                print(f"[chatgpt] After refresh, navigated away to: {new_url}")
+                # Try to navigate back to the conversation
+                if "/c/" in current_url:
+                    print(f"[chatgpt] Navigating back to: {current_url}")
+                    await self.page.goto(current_url)
+                    await asyncio.sleep(3)
+                    return True
+
+            return True
+
+        except Exception as e:
+            log.error("browser.chatgpt.recovery.failed", error=str(e))
+            print(f"[chatgpt] Recovery failed: {e}")
+            return False
 
     async def try_get_response(self) -> Optional[str]:
         """

@@ -28,16 +28,6 @@ def check_pool_health(host: str = "127.0.0.1", port: int = 9000) -> bool:
         return False
 
 
-def check_explorer_health(host: str = "127.0.0.1", port: int = 8765) -> bool:
-    """Check if explorer review UI is responding."""
-    try:
-        import urllib.request
-        with urllib.request.urlopen(f"http://{host}:{port}/api/stats", timeout=2) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
 def get_stats() -> dict:
     """Get statistics from logs and data directories."""
     stats = {
@@ -124,10 +114,9 @@ def api_status():
     pool_responding = check_pool_health(pool_host, pool_port)
     pool_running = pool_proc_running or pool_responding
 
-    # Check explorer status - either via subprocess OR by checking if review UI is responding
-    explorer_proc_running = pm.is_running("explorer") if pm else False
-    explorer_responding = check_explorer_health()
-    explorer_running = explorer_proc_running or explorer_responding
+    # Check explorer status - only via subprocess (explorer orchestrator is a background process)
+    # Note: check_explorer_health() was checking port 8765 which is the control panel itself, not explorer
+    explorer_running = pm.is_running("explorer") if pm else False
 
     # Check documenter status
     documenter_running = pm.is_running("documenter") if pm else False
@@ -184,7 +173,6 @@ def api_status():
         "explorer": {
             "running": explorer_running,
             "pid": pm.get_pid("explorer") if pm else None,
-            "external": explorer_responding and not explorer_proc_running,
         },
         "documenter": {
             "running": documenter_running,

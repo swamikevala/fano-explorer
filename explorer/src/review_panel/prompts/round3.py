@@ -5,6 +5,8 @@ Round 3 is the structured deliberation phase where minority and majority
 positions engage in direct argument and counter-argument.
 """
 
+from shared.prompts import MATH_FORMATTING_INSTRUCTION
+
 
 def build_round3_minority_prompt(
     chunk_insight: str,
@@ -54,6 +56,8 @@ IMPORTANT: If you believe the insight would be valid/profound with a
 MODIFICATION to its wording, definitions, or claims, you may propose one.
 Sometimes a small adjustment to a definition or scope reveals a genuine
 mathematical truth that the current wording obscures.
+
+{MATH_FORMATTING_INSTRUCTION}
 
 RESPOND IN THIS EXACT FORMAT:
 

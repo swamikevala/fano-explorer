@@ -9,6 +9,7 @@ Handles interaction with Gemini web interface, including:
 """
 
 import asyncio
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -44,6 +45,163 @@ class GeminiInterface(BaseLLMInterface):
             'button[aria-label="Copy to clipboard"]',
             'button[mattooltip="Copy"]',
         ]
+
+    async def _extract_response_text(self, response_element) -> str:
+        """
+        Extract response text with special handling for Gemini's math rendering.
+
+        Gemini renders math using special elements (MathML, KaTeX, etc.) that
+        clipboard doesn't capture properly. This method tries:
+        1. DOM-based extraction with math element handling (best for math)
+        2. Clipboard extraction (fallback)
+        3. inner_text (last resort)
+        """
+        # Try DOM-based extraction with math handling FIRST
+        # Clipboard often loses math symbols from rendered elements
+        try:
+            extracted = await self._extract_with_math_handling(response_element)
+            if extracted and len(extracted.strip()) > 10:
+                log.info("browser.gemini.dom_extraction_success", chars=len(extracted))
+                return extracted
+        except Exception as e:
+            log.warning("browser.gemini.dom_extraction_failed", error=str(e))
+
+        log.info("browser.gemini.dom_failed_trying_clipboard")
+
+        # Try clipboard as fallback
+        clipboard_text = await self._extract_via_clipboard(response_element)
+        if clipboard_text:
+            log.info("browser.gemini.clipboard_fallback_success", chars=len(clipboard_text))
+            return clipboard_text
+
+        # Final fallback
+        log.warning("browser.gemini.using_inner_text_fallback")
+        return await response_element.inner_text()
+
+    async def _extract_with_math_handling(self, response_element) -> str:
+        """
+        Extract text from response element with special handling for math elements.
+
+        Gemini may render math as:
+        - MathML elements (<math>)
+        - KaTeX spans with data-* attributes
+        - Elements with aria-label containing the formula
+        - Annotation elements with LaTeX source
+        """
+        # Use JavaScript to walk the DOM and extract text with math preservation
+        extracted = await response_element.evaluate("""(el) => {
+            function extractWithMath(node) {
+                let result = '';
+
+                for (const child of node.childNodes) {
+                    // Text nodes - just add the text
+                    if (child.nodeType === Node.TEXT_NODE) {
+                        result += child.textContent;
+                        continue;
+                    }
+
+                    // Element nodes - check for math
+                    if (child.nodeType === Node.ELEMENT_NODE) {
+                        const tagName = child.tagName.toLowerCase();
+
+                        // MathML: look for annotation with LaTeX
+                        if (tagName === 'math') {
+                            // Try to find annotation-xml or annotation with LaTeX
+                            const annotation = child.querySelector('annotation[encoding*="tex"], annotation[encoding*="latex"], annotation-xml[encoding*="tex"]');
+                            if (annotation) {
+                                result += ' $' + annotation.textContent.trim() + '$ ';
+                                continue;
+                            }
+                            // Fallback: check alttext attribute
+                            const alttext = child.getAttribute('alttext');
+                            if (alttext) {
+                                result += ' $' + alttext.trim() + '$ ';
+                                continue;
+                            }
+                            // Last resort: get aria-label
+                            const ariaLabel = child.getAttribute('aria-label');
+                            if (ariaLabel) {
+                                result += ' $' + ariaLabel.trim() + '$ ';
+                                continue;
+                            }
+                        }
+
+                        // KaTeX elements - look for source in data attributes
+                        if (child.classList && (child.classList.contains('katex') || child.classList.contains('katex-display'))) {
+                            // KaTeX stores source in data attribute or annotation
+                            const annotation = child.querySelector('annotation[encoding*="tex"]');
+                            if (annotation) {
+                                const isDisplay = child.classList.contains('katex-display');
+                                const delim = isDisplay ? '$$' : '$';
+                                result += ' ' + delim + annotation.textContent.trim() + delim + ' ';
+                                continue;
+                            }
+                        }
+
+                        // Check for aria-label on math containers
+                        if (child.getAttribute('role') === 'math' || child.classList.contains('math-container')) {
+                            const ariaLabel = child.getAttribute('aria-label');
+                            if (ariaLabel) {
+                                result += ' $' + ariaLabel.trim() + '$ ';
+                                continue;
+                            }
+                        }
+
+                        // Check data-formula attribute (some renderers use this)
+                        const dataFormula = child.getAttribute('data-formula') || child.getAttribute('data-latex') || child.getAttribute('data-tex');
+                        if (dataFormula) {
+                            result += ' $' + dataFormula.trim() + '$ ';
+                            continue;
+                        }
+
+                        // Skip script/style elements
+                        if (tagName === 'script' || tagName === 'style') {
+                            continue;
+                        }
+
+                        // Code blocks - preserve with backticks
+                        if (tagName === 'code') {
+                            const parentTag = child.parentElement ? child.parentElement.tagName.toLowerCase() : '';
+                            if (parentTag === 'pre') {
+                                result += '\\n```\\n' + child.textContent + '\\n```\\n';
+                            } else {
+                                result += '`' + child.textContent + '`';
+                            }
+                            continue;
+                        }
+
+                        // Line breaks
+                        if (tagName === 'br') {
+                            result += '\\n';
+                            continue;
+                        }
+
+                        // Block elements - add newlines
+                        if (['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr'].includes(tagName)) {
+                            result += '\\n' + extractWithMath(child) + '\\n';
+                            continue;
+                        }
+
+                        // Recurse into other elements
+                        result += extractWithMath(child);
+                    }
+                }
+
+                return result;
+            }
+
+            return extractWithMath(el);
+        }""")
+
+        # Clean up extra whitespace
+        if extracted:
+            # Normalize multiple newlines
+            extracted = re.sub(r'\n{3,}', '\n\n', extracted)
+            # Normalize spaces around math delimiters
+            extracted = re.sub(r'\s*\$\s*', ' $', extracted)
+            extracted = re.sub(r'\s*\$\$\s*', '\n$$', extracted)
+
+        return extracted.strip() if extracted else ""
     
     async def connect(self):
         """Connect to Gemini."""

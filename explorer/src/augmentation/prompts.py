@@ -5,6 +5,7 @@ Prompts for augmentation analysis and generation.
 import re
 from typing import Optional
 
+from shared.prompts import MATH_FORMATTING_INSTRUCTION
 from .models import (
     AugmentationAnalysis,
     DiagramType,
@@ -164,6 +165,8 @@ REQUIREMENTS:
 - Include legend if multiple elements
 - Export as SVG or PNG
 
+{MATH_FORMATTING_INSTRUCTION}
+
 Generate Python code using matplotlib/networkx/graphviz that produces this diagram.
 The code must be self-contained and executable.
 
@@ -212,6 +215,8 @@ REQUIREMENTS:
 - Sorted logically (by number, by category, by relationship)
 - Include totals/summaries if applicable
 - Markdown format
+
+{MATH_FORMATTING_INSTRUCTION}
 
 Respond with:
 TABLE:
@@ -262,6 +267,8 @@ REQUIREMENTS:
 - Each step must follow logically from previous
 - Cite known results where used
 - QED or explicit conclusion
+
+{MATH_FORMATTING_INSTRUCTION}
 
 FORMAT:
 THEOREM: [precise statement]
@@ -321,6 +328,8 @@ REQUIREMENTS:
 - Clear comments explaining each step
 - Print output that demonstrates the claim
 - Include verification/assertion where applicable
+
+{MATH_FORMATTING_INSTRUCTION}
 
 Respond with:
 CODE:

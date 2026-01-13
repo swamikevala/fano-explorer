@@ -5,6 +5,8 @@ Round 1 is the independent review phase where each LLM reviews
 the insight without seeing other reviewers' assessments.
 """
 
+from shared.prompts import MATH_FORMATTING_INSTRUCTION
+
 
 def build_round1_prompt(
     chunk_insight: str,
@@ -70,6 +72,8 @@ MODIFICATION:
 If the insight is ALMOST valid but has a fixable issue (wrong definition, imprecise
 wording, slightly off claim), you may propose a MODIFIED version. Sometimes a small
 adjustment reveals a genuine mathematical truth that the current wording obscures.
+
+{MATH_FORMATTING_INSTRUCTION}
 
 RESPOND IN THIS EXACT FORMAT:
 
