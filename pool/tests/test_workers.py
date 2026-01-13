@@ -177,7 +177,7 @@ class TestGeminiWorker:
         """connect() initializes browser and marks authenticated."""
         worker = GeminiWorker(sample_config, state_manager, gemini_queue)
 
-        with patch("src.workers.GeminiWorker.connect") as mock_connect:
+        with patch("pool.src.workers.GeminiWorker.connect") as mock_connect:
             mock_connect.return_value = None
             worker.browser = mock_gemini_browser
 
@@ -348,46 +348,55 @@ class TestChatGPTWorker:
         mock_chatgpt_browser.enable_pro_mode.assert_called_once()
 
 
+@pytest.fixture
+def mock_claude_browser():
+    """Create a mock ClaudeInterface."""
+    browser = MagicMock()
+    browser.connect = AsyncMock()
+    browser.disconnect = AsyncMock()
+    browser.start_new_chat = AsyncMock()
+    browser.send_message = AsyncMock(return_value="Claude response")
+    browser.enable_extended_thinking = AsyncMock()
+    browser._check_rate_limit = MagicMock(return_value=False)
+    browser.chat_logger = MagicMock()
+    browser.chat_logger.get_session_id = MagicMock(return_value="session-789")
+    browser.page = MagicMock()
+    browser.page.url = "https://claude.ai/chat/test123"
+    browser.set_url_update_callback = MagicMock()
+    return browser
+
+
 class TestClaudeWorker:
-    """Tests for ClaudeWorker."""
+    """Tests for ClaudeWorker (browser-based)."""
 
     def test_init(self, sample_config, state_manager, claude_queue):
         """ClaudeWorker initializes correctly."""
         worker = ClaudeWorker(sample_config, state_manager, claude_queue)
 
         assert worker.backend_name == "claude"
-        assert worker.client is None
-        assert worker._model == "claude-sonnet-4-20250514"
+        assert worker.browser is None
+        assert worker.deep_mode_method == "enable_extended_thinking"
 
     @pytest.mark.asyncio
-    async def test_connect_with_api_key(self, sample_config, state_manager, claude_queue):
-        """connect() initializes Anthropic client with API key."""
+    async def test_disconnect(
+        self, sample_config, state_manager, claude_queue, mock_claude_browser
+    ):
+        """disconnect() cleans up browser."""
         worker = ClaudeWorker(sample_config, state_manager, claude_queue)
+        worker.browser = mock_claude_browser
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch("anthropic.Anthropic") as mock_client:
-                mock_client.return_value = MagicMock()
-                await worker.connect()
+        await worker.disconnect()
 
-                mock_client.assert_called_once_with(api_key="test-key")
-                assert worker.client is not None
+        mock_claude_browser.disconnect.assert_called_once()
+        assert worker.browser is None
 
     @pytest.mark.asyncio
-    async def test_connect_without_api_key(self, sample_config, state_manager, claude_queue):
-        """connect() raises when API key not set."""
+    async def test_process_request_no_browser(
+        self, sample_config, state_manager, claude_queue
+    ):
+        """_process_request returns error when browser not connected."""
         worker = ClaudeWorker(sample_config, state_manager, claude_queue)
-
-        with patch.dict(os.environ, {}, clear=True):
-            # Remove ANTHROPIC_API_KEY if present
-            os.environ.pop("ANTHROPIC_API_KEY", None)
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-                await worker.connect()
-
-    @pytest.mark.asyncio
-    async def test_process_request_no_client(self, sample_config, state_manager, claude_queue):
-        """_process_request returns error when client not initialized."""
-        worker = ClaudeWorker(sample_config, state_manager, claude_queue)
-        worker.client = None
+        worker.browser = None
 
         request = SendRequest(
             backend=Backend.CLAUDE,
@@ -398,23 +407,20 @@ class TestClaudeWorker:
 
         assert response.success is False
         assert response.error == "unavailable"
+        assert "not connected" in response.message.lower()
 
     @pytest.mark.asyncio
-    async def test_process_request_success(self, sample_config, state_manager, claude_queue):
-        """_process_request handles successful API call."""
+    async def test_process_request_success(
+        self, sample_config, state_manager, claude_queue, mock_claude_browser
+    ):
+        """_process_request handles successful browser request."""
         worker = ClaudeWorker(sample_config, state_manager, claude_queue)
-
-        # Mock the Anthropic client
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="Claude response")]
-
-        mock_client = MagicMock()
-        mock_client.messages.create = MagicMock(return_value=mock_response)
-        worker.client = mock_client
+        worker.browser = mock_claude_browser
 
         request = SendRequest(
             backend=Backend.CLAUDE,
             prompt="Test prompt",
+            options=SendOptions(new_chat=True),
         )
 
         response = await worker._process_request(request)
@@ -422,63 +428,48 @@ class TestClaudeWorker:
         assert response.success is True
         assert response.response == "Claude response"
         assert response.metadata.backend == "claude"
-        assert response.metadata.deep_mode_used is False
+        mock_claude_browser.start_new_chat.assert_called_once()
+        mock_claude_browser.send_message.assert_called_once_with("Test prompt")
 
     @pytest.mark.asyncio
-    async def test_process_request_rate_limit_error(
-        self, sample_config, state_manager, claude_queue
+    async def test_process_request_with_extended_thinking(
+        self, sample_config, state_manager, claude_queue, mock_claude_browser
     ):
-        """_process_request handles rate limit errors."""
+        """_process_request enables extended thinking when deep_mode requested."""
         worker = ClaudeWorker(sample_config, state_manager, claude_queue)
-
-        mock_client = MagicMock()
-        mock_client.messages.create = MagicMock(
-            side_effect=Exception("Rate limit exceeded (429)")
-        )
-        worker.client = mock_client
+        worker.browser = mock_claude_browser
+        state_manager.mark_authenticated("claude", True)
 
         request = SendRequest(
             backend=Backend.CLAUDE,
-            prompt="Test",
+            prompt="Test prompt",
+            options=SendOptions(deep_mode=True, new_chat=True),
         )
 
         response = await worker._process_request(request)
 
-        assert response.success is False
-        assert response.error == "api_error"
+        assert response.success is True
+        assert response.metadata.deep_mode_used is True
+        mock_claude_browser.enable_extended_thinking.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_process_request_rate_limit_detected(
+        self, sample_config, state_manager, claude_queue, mock_claude_browser
+    ):
+        """_process_request marks rate limited when detected in response."""
+        worker = ClaudeWorker(sample_config, state_manager, claude_queue)
+        worker.browser = mock_claude_browser
+        mock_claude_browser._check_rate_limit.return_value = True
+
+        request = SendRequest(
+            backend=Backend.CLAUDE,
+            prompt="Test",
+            options=SendOptions(new_chat=True),
+        )
+
+        await worker._process_request(request)
+
         assert state_manager._state["claude"]["rate_limited"] is True
-
-    @pytest.mark.asyncio
-    async def test_authenticate_with_key(self, sample_config, state_manager, claude_queue):
-        """authenticate() returns True when API key is set."""
-        worker = ClaudeWorker(sample_config, state_manager, claude_queue)
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            result = await worker.authenticate()
-
-            assert result is True
-            assert state_manager._state["claude"]["authenticated"] is True
-
-    @pytest.mark.asyncio
-    async def test_authenticate_without_key(self, sample_config, state_manager, claude_queue):
-        """authenticate() returns False when API key not set."""
-        worker = ClaudeWorker(sample_config, state_manager, claude_queue)
-
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("ANTHROPIC_API_KEY", None)
-            result = await worker.authenticate()
-
-            assert result is False
-
-    @pytest.mark.asyncio
-    async def test_disconnect(self, sample_config, state_manager, claude_queue):
-        """disconnect() clears the client."""
-        worker = ClaudeWorker(sample_config, state_manager, claude_queue)
-        worker.client = MagicMock()
-
-        await worker.disconnect()
-
-        assert worker.client is None
 
 
 class TestWorkerLoop:

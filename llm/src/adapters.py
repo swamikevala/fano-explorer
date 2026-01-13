@@ -5,6 +5,7 @@ These adapters allow existing code (orchestrator, review_panel, etc.)
 to work with the new LLM library without major refactoring.
 """
 
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -25,8 +26,12 @@ class BrowserAdapter:
     - disconnect()
     - last_deep_mode_used attribute
 
-    This adapter translates those calls to LLMClient.
+    This adapter translates those calls to LLMClient using the async job system
+    for robust handling of timeouts and pool restarts.
     """
+
+    # Override in subclasses with backend-specific rate limit signals
+    rate_limit_signals: list[str] = []
 
     def __init__(self, client: LLMClient, backend: str):
         """
@@ -65,7 +70,10 @@ class BrowserAdapter:
         thread_id: Optional[str] = None,
     ) -> str:
         """
-        Send message to LLM.
+        Send message to LLM using the async job system.
+
+        This uses the robust async job flow which handles pool restarts
+        and long-running requests gracefully.
 
         Args:
             prompt: The prompt text
@@ -80,12 +88,26 @@ class BrowserAdapter:
         # Determine deep mode based on backend-specific flags
         deep_mode = use_deep_think or use_pro_mode
 
-        response = await self.client.send(
+        # Generate a unique job ID
+        # Use thread_id as prefix if available for easier correlation
+        job_id = f"{thread_id or 'job'}-{uuid.uuid4().hex[:8]}"
+
+        log.info("llm.adapter.send_async",
+                 backend=self.backend,
+                 job_id=job_id,
+                 thread_id=thread_id,
+                 deep_mode=deep_mode,
+                 prompt_length=len(prompt))
+
+        response = await self.client.send_async(
             self.backend,
             prompt,
+            job_id=job_id,
+            thread_id=thread_id,
             deep_mode=deep_mode,
             new_chat=True,  # Each send starts fresh
-            thread_id=thread_id,
+            poll_interval=5.0,  # Check every 5 seconds
+            timeout_seconds=3600,  # 1 hour max wait
         )
 
         # Track whether deep mode was actually used
@@ -93,8 +115,17 @@ class BrowserAdapter:
 
         if not response.success:
             error_msg = f"{response.error}: {response.message}"
-            log.error("llm.adapter.request_failed", backend=self.backend, error=response.error, message=response.message)
+            log.error("llm.adapter.request_failed",
+                     backend=self.backend,
+                     job_id=job_id,
+                     error=response.error,
+                     message=response.message)
             raise RuntimeError(error_msg)
+
+        log.info("llm.adapter.send_complete",
+                 backend=self.backend,
+                 job_id=job_id,
+                 response_length=len(response.text or ""))
 
         return response.text or ""
 
@@ -104,11 +135,22 @@ class BrowserAdapter:
         # Assume available if connected
         return self._connected
 
+    def _check_rate_limit(self, response: str) -> bool:
+        """Check for rate limit signals in response."""
+        response_lower = response.lower()
+        return any(signal in response_lower for signal in self.rate_limit_signals)
+
 
 class GeminiAdapter(BrowserAdapter):
     """Adapter that mimics GeminiInterface."""
 
     model_name = "gemini"
+    rate_limit_signals = [
+        "try again tomorrow",
+        "quota exceeded",
+        "rate limit",
+        "too many requests",
+    ]
 
     def __init__(self, client: LLMClient):
         super().__init__(client, "gemini")
@@ -117,22 +159,17 @@ class GeminiAdapter(BrowserAdapter):
         """Deep think is enabled via send_message flag."""
         pass
 
-    def _check_rate_limit(self, response: str) -> bool:
-        """Check for rate limit signals in response."""
-        rate_limit_signals = [
-            "try again tomorrow",
-            "quota exceeded",
-            "rate limit",
-            "too many requests",
-        ]
-        response_lower = response.lower()
-        return any(signal in response_lower for signal in rate_limit_signals)
-
 
 class ChatGPTAdapter(BrowserAdapter):
     """Adapter that mimics ChatGPTInterface."""
 
     model_name = "chatgpt"
+    rate_limit_signals = [
+        "usage cap",
+        "rate limit",
+        "too many requests",
+        "reached the limit",
+    ]
 
     def __init__(self, client: LLMClient):
         super().__init__(client, "chatgpt")
@@ -145,49 +182,23 @@ class ChatGPTAdapter(BrowserAdapter):
         """Thinking mode is enabled via send_message flag."""
         pass
 
-    def _check_rate_limit(self, response: str) -> bool:
-        """Check for rate limit signals in response."""
-        rate_limit_signals = [
-            "usage cap",
-            "rate limit",
-            "too many requests",
-            "reached the limit",
-        ]
-        response_lower = response.lower()
-        return any(signal in response_lower for signal in rate_limit_signals)
-
 
 class ClaudeAdapter(BrowserAdapter):
-    """Adapter for Claude API (direct, not via pool)."""
+    """Adapter that mimics ClaudeInterface (via pool browser)."""
 
     model_name = "claude"
+    rate_limit_signals = [
+        "rate limit",
+        "too many requests",
+        "usage limit",
+    ]
 
-    def __init__(self, client: LLMClient, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, client: LLMClient):
         super().__init__(client, "claude")
-        self.model = model
 
-    async def send_message(
-        self,
-        prompt: str,
-        use_deep_think: bool = False,
-        use_pro_mode: bool = False,
-        use_thinking_mode: bool = False,
-    ) -> str:
-        """Send message to Claude API."""
-        response = await self.client.send(
-            "claude",
-            prompt,
-            model=self.model,
-        )
-
-        self.last_deep_mode_used = False  # Claude doesn't have deep mode
-
-        if not response.success:
-            error_msg = f"{response.error}: {response.message}"
-            log.error("llm.adapter.request_failed", backend="claude", error=response.error, message=response.message)
-            raise RuntimeError(error_msg)
-
-        return response.text or ""
+    async def enable_extended_thinking(self):
+        """Extended thinking is enabled via send_message flag."""
+        pass
 
 
 def create_adapters(client: LLMClient) -> dict:

@@ -14,10 +14,12 @@ from shared.logging import get_logger
 from .models import (
     SendRequest, SendResponse, Backend, Priority,
     BackendStatus, PoolStatus, HealthResponse, AuthResponse,
+    JobSubmitRequest,
 )
 from .state import StateManager
 from .queue import QueueManager, QueueFullError
 from .workers import GeminiWorker, ChatGPTWorker, ClaudeWorker
+from .jobs import JobStore, JobStatus
 
 log = get_logger("pool", "api")
 
@@ -37,7 +39,11 @@ class BrowserPool:
         state_file = Path(__file__).parent.parent / "pool_state.json"
         self.state = StateManager(state_file, config)
 
-        # Initialize queue manager
+        # Initialize job store (async jobs)
+        jobs_file = Path(__file__).parent.parent / "jobs_state.json"
+        self.jobs = JobStore(persist_path=jobs_file)
+
+        # Initialize queue manager (legacy sync mode)
         self.queues = QueueManager(config)
 
         # Initialize workers (but don't start yet)
@@ -46,17 +52,17 @@ class BrowserPool:
 
         if backends_config.get("gemini", {}).get("enabled", True):
             self.workers["gemini"] = GeminiWorker(
-                config, self.state, self.queues.get_queue("gemini")
+                config, self.state, self.queues.get_queue("gemini"), self.jobs
             )
 
         if backends_config.get("chatgpt", {}).get("enabled", True):
             self.workers["chatgpt"] = ChatGPTWorker(
-                config, self.state, self.queues.get_queue("chatgpt")
+                config, self.state, self.queues.get_queue("chatgpt"), self.jobs
             )
 
         if backends_config.get("claude", {}).get("enabled", True):
             self.workers["claude"] = ClaudeWorker(
-                config, self.state, self.queues.get_queue("claude")
+                config, self.state, self.queues.get_queue("claude"), self.jobs
             )
 
     async def startup(self):
@@ -312,8 +318,90 @@ def create_app(config: dict) -> FastAPI:
 
     @app.post("/send", response_model=SendResponse)
     async def send(request: SendRequest):
-        """Send a prompt to an LLM and wait for response."""
+        """Send a prompt to an LLM and wait for response (legacy sync mode)."""
         return await pool.send(request)
+
+    # ==================== ASYNC JOB ENDPOINTS ====================
+
+    @app.post("/job/submit")
+    async def job_submit(request: JobSubmitRequest):
+        """
+        Submit a job for async processing.
+
+        Returns immediately with job status. Poll /job/{job_id}/status for completion.
+
+        Returns:
+            {status: "queued" | "exists" | "cached", job_id: str, cached_job_id?: str}
+        """
+        # Validate backend
+        if request.backend not in pool.workers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Backend '{request.backend}' not enabled"
+            )
+
+        # Check if backend is available
+        if not pool.state.is_available(request.backend):
+            state = pool.state.get_backend_state(request.backend)
+            if state.get("rate_limited"):
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"{request.backend} is rate limited"
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"{request.backend} requires authentication"
+                )
+
+        # Submit to job store
+        result = pool.jobs.submit(
+            job_id=request.job_id,
+            backend=request.backend,
+            prompt=request.prompt,
+            thread_id=request.thread_id,
+            deep_mode=request.deep_mode,
+            new_chat=request.new_chat,
+            priority=request.priority,
+        )
+
+        return result
+
+    @app.get("/job/{job_id}/status")
+    async def job_status(job_id: str):
+        """
+        Get the status of a job.
+
+        Returns:
+            {job_id, status, queue_position, backend, created_at, started_at, completed_at}
+        """
+        status = pool.jobs.get_status(job_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        return status
+
+    @app.get("/job/{job_id}/result")
+    async def job_result(job_id: str):
+        """
+        Get the result of a completed job.
+
+        Returns:
+            {job_id, status, result?, error?, deep_mode_used, backend, thread_id}
+        """
+        result = pool.jobs.get_result(job_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        return result
+
+    @app.get("/jobs/queue")
+    async def jobs_queue():
+        """Get queue depths for all backends."""
+        return {
+            "queues": pool.jobs.get_all_queues(),
+            "total": sum(pool.jobs.get_all_queues().values()),
+        }
+
+    # ==================== END ASYNC JOB ENDPOINTS ====================
 
     @app.get("/status", response_model=PoolStatus)
     async def status(health_check: bool = True):
@@ -403,31 +491,6 @@ def create_app(config: dict) -> FastAPI:
 
         return result
 
-    @app.get("/recovered")
-    async def get_recovered():
-        """
-        Get any recovered responses pending pickup.
-
-        After a pool restart, responses that were recovered from in-progress
-        chats are stored here for later pickup by the client.
-        """
-        responses = pool.state.get_recovered_responses()
-        return {"responses": responses, "count": len(responses)}
-
-    @app.delete("/recovered/{request_id}")
-    async def clear_recovered(request_id: str):
-        """
-        Mark a recovered response as picked up.
-
-        Call this after successfully processing a recovered response
-        to remove it from the pending list.
-        """
-        found = pool.state.clear_recovered_response(request_id)
-        if found:
-            return {"status": "cleared", "request_id": request_id}
-        else:
-            raise HTTPException(status_code=404, detail=f"No recovered response with id: {request_id}")
-
     @app.get("/recovery/status")
     async def recovery_status():
         """
@@ -436,25 +499,37 @@ def create_app(config: dict) -> FastAPI:
         Returns information about:
         - Active work per backend (with age and thread_id)
         - Pending queue items per backend
-        - Count of recovered responses awaiting pickup
+        - Pending async jobs per backend
         """
         from .state import MAX_ACTIVE_WORK_AGE_SECONDS
 
         result = {
             "backends": {},
             "pending_queue": pool.queues.get_depths(),
-            "recovered_responses_count": len(pool.state.get_recovered_responses()),
+            "pending_jobs": pool.jobs.get_all_queues(),
             "max_active_work_age_seconds": MAX_ACTIVE_WORK_AGE_SECONDS,
         }
 
         for backend in ["gemini", "chatgpt", "claude"]:
             # Get active work without staleness check to see all work
             active = pool.state.get_active_work(backend, check_staleness=False)
+            processing_job = pool.jobs.get_processing_job(backend)
 
-            if active:
+            backend_info = {"has_active_work": False}
+
+            if processing_job:
+                backend_info = {
+                    "has_active_work": True,
+                    "job_id": processing_job.job_id,
+                    "thread_id": processing_job.thread_id,
+                    "chat_url": processing_job.chat_url,
+                    "deep_mode": processing_job.deep_mode,
+                    "is_async_job": True,
+                }
+            elif active:
                 started_at = active.get("started_at", 0)
                 age_seconds = time.time() - started_at
-                result["backends"][backend] = {
+                backend_info = {
                     "has_active_work": True,
                     "request_id": active.get("request_id"),
                     "thread_id": active.get("thread_id"),
@@ -462,11 +537,10 @@ def create_app(config: dict) -> FastAPI:
                     "age_seconds": round(age_seconds),
                     "is_stale": age_seconds > MAX_ACTIVE_WORK_AGE_SECONDS,
                     "deep_mode": active.get("options", {}).get("deep_mode", False),
+                    "is_async_job": False,
                 }
-            else:
-                result["backends"][backend] = {
-                    "has_active_work": False,
-                }
+
+            result["backends"][backend] = backend_info
 
         return result
 

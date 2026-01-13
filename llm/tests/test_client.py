@@ -227,18 +227,16 @@ class TestLLMClientSend:
             )
 
     @pytest.mark.asyncio
-    async def test_send_routes_claude_to_api(self):
+    async def test_send_routes_claude_to_pool(self):
         client = LLMClient()
 
         expected_response = LLMResponse(success=True, text="Hello from Claude")
 
-        with patch.object(client, "_send_to_claude", return_value=expected_response) as mock_api:
+        with patch.object(client, "_send_via_pool", return_value=expected_response) as mock_pool:
             response = await client.send("claude", "Test prompt")
 
-            mock_api.assert_called_once_with(
-                "Test prompt",
-                model="claude-sonnet-4-20250514",
-                timeout_seconds=300,
+            mock_pool.assert_called_once_with(
+                "claude", "Test prompt", False, True, 300, "normal", None
             )
             assert response == expected_response
 
@@ -272,12 +270,12 @@ class TestLLMClientSend:
 
         expected_response = LLMResponse(success=True, text="Hello")
 
-        with patch.object(client, "_send_to_claude", return_value=expected_response) as mock_api:
-            await client.send("claude", "Test", model="claude-opus-4-20250514")
+        with patch.object(client, "_send_to_openrouter", return_value=expected_response) as mock_api:
+            await client.send("openrouter", "Test", model="anthropic/claude-3-opus")
 
             mock_api.assert_called_once_with(
                 "Test",
-                model="claude-opus-4-20250514",
+                model="anthropic/claude-3-opus",
                 timeout_seconds=300,
             )
 
@@ -454,24 +452,29 @@ class TestLLMClientGetAvailableBackends:
 
     @pytest.mark.asyncio
     async def test_includes_api_backends_with_keys(self):
-        client = LLMClient(anthropic_api_key="key", openrouter_api_key="key")
+        client = LLMClient(openrouter_api_key="key")
 
         with patch.object(client, "get_pool_status", side_effect=PoolUnavailableError()):
             available = await client.get_available_backends()
 
-        assert "claude" in available
+        # OpenRouter is API-based and available with key
         assert "openrouter" in available
+        # Claude now goes through pool, so not available when pool is down
+        assert "claude" not in available
 
     @pytest.mark.asyncio
     async def test_handles_pool_unavailable(self):
-        client = LLMClient(anthropic_api_key="key")
+        client = LLMClient(openrouter_api_key="key")
 
         with patch.object(client, "get_pool_status", side_effect=PoolUnavailableError()):
             available = await client.get_available_backends()
 
-        # Pool backends not available, but Claude is
+        # Pool backends not available (gemini, chatgpt, claude)
         assert "gemini" not in available
-        assert "claude" in available
+        assert "chatgpt" not in available
+        assert "claude" not in available
+        # OpenRouter is available via API
+        assert "openrouter" in available
 
 
 class TestLLMClientConvenienceMethods:
@@ -514,11 +517,12 @@ class TestLLMClientConvenienceMethods:
         expected = LLMResponse(success=True, text="Hello")
 
         with patch.object(client, "send", return_value=expected) as mock_send:
-            result = await client.claude("Test", model="claude-opus-4-20250514")
+            result = await client.claude("Test", extended_thinking=True)
 
             mock_send.assert_called_once_with(
                 "claude", "Test",
-                model="claude-opus-4-20250514",
+                deep_mode=True,
+                new_chat=True,
                 timeout_seconds=300,
             )
 
@@ -543,409 +547,13 @@ class TestConstants:
     def test_browser_backends(self):
         assert "gemini" in BROWSER_BACKENDS
         assert "chatgpt" in BROWSER_BACKENDS
-        assert "claude" not in BROWSER_BACKENDS
+        assert "claude" in BROWSER_BACKENDS  # Claude now goes via pool browser
 
     def test_api_backends(self):
-        assert "claude" in API_BACKENDS
         assert "openrouter" in API_BACKENDS
+        # Claude now routes through pool browser, not direct API
+        assert "claude" not in API_BACKENDS
         assert "gemini" not in API_BACKENDS
-
-
-# =============================================================================
-# Recovery Tests
-# =============================================================================
-
-class TestWaitForPool:
-    """Tests for _wait_for_pool method."""
-
-    @pytest.mark.asyncio
-    async def test_wait_for_pool_immediately_available(self):
-        """Returns True immediately when pool is available."""
-        client = LLMClient()
-
-        with patch.object(client, "is_pool_available", return_value=True):
-            result = await client._wait_for_pool(timeout_seconds=10)
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_wait_for_pool_becomes_available(self):
-        """Returns True when pool becomes available within timeout."""
-        client = LLMClient()
-
-        call_count = 0
-
-        async def mock_is_available():
-            nonlocal call_count
-            call_count += 1
-            return call_count >= 3  # Available on 3rd call
-
-        with patch.object(client, "is_pool_available", side_effect=mock_is_available):
-            result = await client._wait_for_pool(timeout_seconds=30)
-
-        assert result is True
-        assert call_count == 3
-
-    @pytest.mark.asyncio
-    async def test_wait_for_pool_timeout(self):
-        """Returns False when pool doesn't become available within timeout."""
-        client = LLMClient()
-
-        with patch.object(client, "is_pool_available", return_value=False):
-            # Use very short timeout for test speed
-            result = await client._wait_for_pool(timeout_seconds=0.1)
-
-        assert result is False
-
-
-class TestPollForRecovered:
-    """Tests for _poll_for_recovered method."""
-
-    @pytest.mark.asyncio
-    async def test_finds_matching_response(self):
-        """Returns response when matching thread_id is found."""
-        client = LLMClient()
-
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "responses": [
-                {
-                    "request_id": "gemini-123",
-                    "thread_id": "target-thread",
-                    "backend": "gemini",
-                    "response": "Recovered response text",
-                    "options": {"deep_mode": True},
-                },
-                {
-                    "request_id": "chatgpt-456",
-                    "thread_id": "other-thread",
-                    "backend": "chatgpt",
-                    "response": "Other response",
-                },
-            ]
-        })
-
-        delete_response = MagicMock()
-        delete_response.__aenter__ = AsyncMock(return_value=delete_response)
-        delete_response.__aexit__ = AsyncMock(return_value=None)
-
-        get_context = AsyncMock()
-        get_context.__aenter__ = AsyncMock(return_value=mock_response)
-        get_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=get_context)
-        mock_session.delete = MagicMock(return_value=delete_response)
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            result = await client._poll_for_recovered("target-thread", timeout_seconds=10)
-
-        assert result is not None
-        assert result.success is True
-        assert result.text == "Recovered response text"
-        assert result.backend == "gemini"
-        assert result.deep_mode_used is True
-
-    @pytest.mark.asyncio
-    async def test_no_matching_response(self):
-        """Returns None when no matching thread_id is found."""
-        client = LLMClient()
-
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "responses": [
-                {
-                    "request_id": "chatgpt-456",
-                    "thread_id": "other-thread",
-                    "backend": "chatgpt",
-                    "response": "Other response",
-                },
-            ]
-        })
-
-        get_context = AsyncMock()
-        get_context.__aenter__ = AsyncMock(return_value=mock_response)
-        get_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=get_context)
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            result = await client._poll_for_recovered(
-                "nonexistent-thread",
-                timeout_seconds=0.1,
-                poll_interval=0.05,
-            )
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_empty_responses_list(self):
-        """Returns None when responses list is empty."""
-        client = LLMClient()
-
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={"responses": []})
-
-        get_context = AsyncMock()
-        get_context.__aenter__ = AsyncMock(return_value=mock_response)
-        get_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=get_context)
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            result = await client._poll_for_recovered(
-                "any-thread",
-                timeout_seconds=0.1,
-                poll_interval=0.05,
-            )
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_clears_recovered_after_pickup(self):
-        """Attempts to DELETE recovered response after picking it up."""
-        client = LLMClient()
-
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "responses": [
-                {
-                    "request_id": "gemini-to-clear",
-                    "thread_id": "clear-thread",
-                    "backend": "gemini",
-                    "response": "Response to clear",
-                },
-            ]
-        })
-
-        delete_response = MagicMock()
-        delete_response.__aenter__ = AsyncMock(return_value=delete_response)
-        delete_response.__aexit__ = AsyncMock(return_value=None)
-
-        get_context = AsyncMock()
-        get_context.__aenter__ = AsyncMock(return_value=mock_response)
-        get_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=get_context)
-        mock_session.delete = MagicMock(return_value=delete_response)
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            await client._poll_for_recovered("clear-thread", timeout_seconds=10)
-
-        # Verify DELETE was called with correct URL
-        mock_session.delete.assert_called()
-        delete_url = mock_session.delete.call_args[0][0]
-        assert "gemini-to-clear" in delete_url
-
-    @pytest.mark.asyncio
-    async def test_handles_poll_errors_gracefully(self):
-        """Continues polling despite individual request errors."""
-        client = LLMClient()
-
-        call_count = 0
-
-        async def mock_get_session():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                raise Exception("Connection error")
-            # Return success on 3rd call
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={
-                "responses": [
-                    {
-                        "request_id": "found",
-                        "thread_id": "retry-thread",
-                        "backend": "gemini",
-                        "response": "Found after retries",
-                    }
-                ]
-            })
-
-            get_context = AsyncMock()
-            get_context.__aenter__ = AsyncMock(return_value=mock_response)
-            get_context.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session = MagicMock()
-            mock_session.get = MagicMock(return_value=get_context)
-            mock_session.delete = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(),
-                __aexit__=AsyncMock()
-            ))
-            return mock_session
-
-        with patch.object(client, "_get_http_session", side_effect=mock_get_session):
-            result = await client._poll_for_recovered(
-                "retry-thread",
-                timeout_seconds=10,
-                poll_interval=0.01,
-            )
-
-        assert result is not None
-        assert result.text == "Found after retries"
-
-
-class TestSendViaPoolRecovery:
-    """Tests for recovery behavior in _send_via_pool."""
-
-    @pytest.mark.asyncio
-    async def test_recovery_on_connection_error_with_thread_id(self):
-        """Attempts recovery when connection fails and thread_id is provided."""
-        client = LLMClient()
-
-        recovered_response = LLMResponse(
-            success=True,
-            text="Recovered from pool restart",
-            backend="gemini",
-        )
-
-        # Create a context manager that raises on entry
-        mock_context = MagicMock()
-        mock_context.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("Connection refused"))
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(return_value=mock_context)
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            with patch.object(client, "_wait_for_pool", return_value=True):
-                with patch.object(client, "_poll_for_recovered", return_value=recovered_response):
-                    result = await client._send_via_pool(
-                        backend="gemini",
-                        prompt="Test prompt",
-                        deep_mode=False,
-                        new_chat=True,
-                        timeout_seconds=60,
-                        priority="normal",
-                        thread_id="recovery-thread",
-                    )
-
-        assert result.success is True
-        assert result.text == "Recovered from pool restart"
-
-    @pytest.mark.asyncio
-    async def test_no_recovery_without_thread_id(self):
-        """Does not attempt recovery when thread_id not provided."""
-        client = LLMClient()
-
-        # Create a context manager that raises on entry
-        mock_context = MagicMock()
-        mock_context.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("Connection refused"))
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(return_value=mock_context)
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            with patch.object(client, "_wait_for_pool") as mock_wait:
-                with patch.object(client, "_poll_for_recovered") as mock_poll:
-                    with pytest.raises(PoolUnavailableError):
-                        await client._send_via_pool(
-                            backend="gemini",
-                            prompt="Test prompt",
-                            deep_mode=False,
-                            new_chat=True,
-                            timeout_seconds=60,
-                            priority="normal",
-                            thread_id=None,  # No thread_id
-                        )
-
-        # Should not have called recovery methods
-        mock_wait.assert_not_called()
-        mock_poll.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_retry_when_pool_down_no_recovery(self):
-        """Retries request when pool unavailable and no recovery found."""
-        client = LLMClient()
-
-        call_count = 0
-
-        def create_context(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                # Return context that fails on entry
-                mock_context = MagicMock()
-                mock_context.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("Connection refused"))
-                mock_context.__aexit__ = AsyncMock(return_value=None)
-                return mock_context
-            # Success on 3rd attempt
-            mock_response = MagicMock()
-            mock_response.json = AsyncMock(return_value={
-                "success": True,
-                "response": "Success after retry",
-                "metadata": {"backend": "gemini"},
-            })
-            context = MagicMock()
-            context.__aenter__ = AsyncMock(return_value=mock_response)
-            context.__aexit__ = AsyncMock(return_value=None)
-            return context
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(side_effect=create_context)
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            with patch.object(client, "_wait_for_pool", return_value=True):
-                with patch.object(client, "_poll_for_recovered", return_value=None):
-                    result = await client._send_via_pool(
-                        backend="gemini",
-                        prompt="Test prompt",
-                        deep_mode=False,
-                        new_chat=True,
-                        timeout_seconds=60,
-                        priority="normal",
-                        thread_id="retry-thread",
-                    )
-
-        assert result.success is True
-        assert result.text == "Success after retry"
-
-    @pytest.mark.asyncio
-    async def test_thread_id_passed_in_request(self):
-        """Thread ID is included in the request data."""
-        client = LLMClient()
-
-        captured_request = None
-
-        def capture_post(url, json=None, **kwargs):
-            nonlocal captured_request
-            captured_request = json
-            mock_response = MagicMock()
-            mock_response.json = AsyncMock(return_value={
-                "success": True,
-                "response": "Response",
-                "metadata": {"backend": "gemini"},
-            })
-            context = MagicMock()
-            context.__aenter__ = AsyncMock(return_value=mock_response)
-            context.__aexit__ = AsyncMock(return_value=None)
-            return context
-
-        mock_session = MagicMock()
-        mock_session.post = capture_post
-
-        with patch.object(client, "_get_http_session", return_value=mock_session):
-            await client._send_via_pool(
-                backend="gemini",
-                prompt="Test prompt",
-                deep_mode=False,
-                new_chat=True,
-                timeout_seconds=60,
-                priority="normal",
-                thread_id="my-thread-id",
-            )
-
-        assert captured_request is not None
-        assert captured_request["thread_id"] == "my-thread-id"
 
 
 class TestSendWithThreadId:

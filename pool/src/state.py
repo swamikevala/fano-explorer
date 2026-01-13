@@ -70,8 +70,6 @@ class StateManager:
                 "rate_limited": False,
                 "rate_limit_resets_at": None,
             },
-            # Recovered responses waiting to be picked up by clients
-            "recovered_responses": [],
         }
 
     def _save(self):
@@ -236,56 +234,3 @@ class StateManager:
                     return None
 
             return active_work
-
-    # --- Recovered Responses ---
-
-    def add_recovered_response(
-        self,
-        backend: str,
-        request_id: str,
-        prompt: str,
-        response: str,
-        thread_id: Optional[str] = None,
-        options: Optional[dict] = None,
-    ):
-        """Store a recovered response for later pickup."""
-        with self._lock:
-            # Initialize if not present
-            if "recovered_responses" not in self._state:
-                self._state["recovered_responses"] = []
-
-            self._state["recovered_responses"].append({
-                "request_id": request_id,
-                "backend": backend,
-                "prompt": prompt,
-                "response": response,
-                "thread_id": thread_id,
-                "options": options or {},
-                "recovered_at": time.time(),
-            })
-            self._save()
-            log.info("pool.state.response_recovered",
-                     backend=backend,
-                     request_id=request_id,
-                     response_length=len(response))
-
-    def get_recovered_responses(self) -> list[dict]:
-        """Get all recovered responses pending pickup."""
-        with self._lock:
-            return list(self._state.get("recovered_responses", []))
-
-    def clear_recovered_response(self, request_id: str) -> bool:
-        """Remove a recovered response (after pickup). Returns True if found."""
-        with self._lock:
-            if "recovered_responses" not in self._state:
-                return False
-            original_len = len(self._state["recovered_responses"])
-            self._state["recovered_responses"] = [
-                r for r in self._state["recovered_responses"]
-                if r.get("request_id") != request_id
-            ]
-            removed = len(self._state["recovered_responses"]) < original_len
-            if removed:
-                self._save()
-                log.info("pool.state.recovered_response_cleared", request_id=request_id)
-            return removed

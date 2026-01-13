@@ -21,6 +21,7 @@ from explorer.src.browser.base import AuthenticationRequired
 from .models import SendRequest, SendResponse, ResponseMetadata, Backend
 from .state import StateManager
 from .queue import RequestQueue, QueuedRequest
+from .jobs import JobStore, Job, JobStatus
 
 log = get_logger("pool", "workers")
 
@@ -31,10 +32,11 @@ class BaseWorker:
     backend_name: str = "base"
     deep_mode_method: Optional[str] = None  # Override in subclass: "enable_deep_think", "enable_pro_mode"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
+    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
         self.config = config
         self.state = state
         self.queue = queue
+        self.jobs = jobs  # JobStore for async jobs
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self.browser = None  # Set by subclasses
@@ -43,6 +45,7 @@ class BaseWorker:
         self._current_request_id: Optional[str] = None
         self._current_prompt: Optional[str] = None
         self._current_start_time: Optional[float] = None
+        self._current_job: Optional[Job] = None  # For async jobs
 
         # Request history (circular buffer of last N requests)
         self._request_history: list[dict] = []
@@ -66,7 +69,7 @@ class BaseWorker:
         log.info("pool.worker.lifecycle", action="stopped", backend=self.backend_name)
 
     async def _run_loop(self):
-        """Main worker loop - process requests from queue."""
+        """Main worker loop - process jobs and legacy queue requests."""
         while self._running:
             try:
                 # Check if we're available
@@ -74,13 +77,20 @@ class BaseWorker:
                     await asyncio.sleep(1)
                     continue
 
-                # Try to get a request
+                # First, check JobStore for async jobs (new system)
+                if self.jobs:
+                    job = self.jobs.get_next_job(self.backend_name)
+                    if job:
+                        await self._process_job(job)
+                        continue
+
+                # Fall back to legacy queue (sync system)
                 queued = await self.queue.dequeue()
                 if not queued:
                     await asyncio.sleep(0.1)  # Small sleep when idle
                     continue
 
-                # Process the request
+                # Process the legacy request
                 start_time = log.request_start(
                     queued.request_id, self.backend_name, queued.request.prompt,
                     priority=queued.request.options.priority.value,
@@ -116,6 +126,8 @@ class BaseWorker:
                     # Save to history before clearing
                     if self._current_request_id:
                         elapsed = time.time() - self._current_start_time if self._current_start_time else 0
+                        # Check if response was assigned (handles both success and exception cases)
+                        was_successful = 'response' in locals() and response.success
                         history_entry = {
                             "request_id": self._current_request_id,
                             "prompt": self._current_prompt,
@@ -123,7 +135,7 @@ class BaseWorker:
                             "started_at": self._current_start_time,
                             "completed_at": time.time(),
                             "elapsed_seconds": round(elapsed, 2),
-                            "success": response.success if 'response' in dir() else False,
+                            "success": was_successful,
                             "backend": self.backend_name,
                         }
                         self._request_history.append(history_entry)
@@ -146,6 +158,97 @@ class BaseWorker:
         """Process a single request. Override in subclasses."""
         raise NotImplementedError
 
+    async def _process_job(self, job: Job):
+        """
+        Process an async job from JobStore.
+
+        This converts the job to a SendRequest and processes it,
+        then updates the JobStore with the result.
+        """
+        log.info("pool.job.processing",
+                 job_id=job.job_id,
+                 backend=self.backend_name,
+                 thread_id=job.thread_id,
+                 deep_mode=job.deep_mode)
+
+        # Track current job
+        self._current_job = job
+        self._current_request_id = job.job_id
+        self._current_prompt = job.prompt
+        self._current_start_time = time.time()
+
+        try:
+            # Convert job to SendRequest for processing
+            from .models import SendOptions, Priority
+            request = SendRequest(
+                backend=Backend(self.backend_name),
+                prompt=job.prompt,
+                options=SendOptions(
+                    deep_mode=job.deep_mode,
+                    new_chat=job.new_chat,
+                    priority=Priority(job.priority),
+                    timeout_seconds=3600,  # Jobs have long timeout
+                ),
+                thread_id=job.thread_id,
+            )
+
+            # Process the request
+            response = await self._process_request(request)
+
+            if response.success:
+                # Complete the job successfully
+                self.jobs.complete(
+                    job_id=job.job_id,
+                    result=response.response or "",
+                    deep_mode_used=response.metadata.deep_mode_used if response.metadata else False,
+                )
+                log.info("pool.job.completed",
+                         job_id=job.job_id,
+                         backend=self.backend_name,
+                         result_length=len(response.response or ""))
+            else:
+                # Job failed
+                self.jobs.fail(
+                    job_id=job.job_id,
+                    error=f"{response.error}: {response.message}",
+                )
+                log.error("pool.job.failed",
+                          job_id=job.job_id,
+                          backend=self.backend_name,
+                          error=response.error,
+                          message=response.message)
+
+        except Exception as e:
+            # Unexpected error
+            self.jobs.fail(
+                job_id=job.job_id,
+                error=f"processing_error: {str(e)}",
+            )
+            log.exception(e, "pool.job.error", {"job_id": job.job_id, "backend": self.backend_name})
+
+        finally:
+            # Save to history
+            elapsed = time.time() - self._current_start_time if self._current_start_time else 0
+            history_entry = {
+                "request_id": job.job_id,
+                "prompt_length": len(job.prompt),
+                "started_at": self._current_start_time,
+                "completed_at": time.time(),
+                "elapsed_seconds": round(elapsed, 2),
+                "success": job.status == JobStatus.COMPLETE if hasattr(job, 'status') else False,
+                "backend": self.backend_name,
+                "is_async_job": True,
+            }
+            self._request_history.append(history_entry)
+            if len(self._request_history) > self._max_history:
+                self._request_history.pop(0)
+
+            # Clear tracking
+            self._current_job = None
+            self._current_request_id = None
+            self._current_prompt = None
+            self._current_start_time = None
+
     async def connect(self):
         """Connect to the backend. Override in subclasses."""
         raise NotImplementedError
@@ -160,13 +263,38 @@ class BaseWorker:
 
     async def check_health(self) -> tuple[bool, str]:
         """
-        Check if the backend is actually healthy and responsive.
+        Check if the backend browser is healthy and responsive.
 
         Returns:
             Tuple of (is_healthy, reason)
         """
-        # Default implementation - subclasses should override
-        return True, "ok"
+        if not self.browser:
+            return False, "browser_not_initialized"
+
+        try:
+            # Check if page exists - try reconnect if not
+            if not self.browser.page:
+                log.warning("pool.health.page_none", backend=self.backend_name, action="attempting_reconnect")
+                if await self.try_reconnect():
+                    log.info("pool.health.reconnected", backend=self.backend_name)
+                else:
+                    return False, "page_not_initialized_reconnect_failed"
+
+            # Verify page is responsive (throws TargetClosedError if browser crashed)
+            await asyncio.wait_for(
+                self.browser.page.evaluate("() => document.readyState"),
+                timeout=5.0
+            )
+            return True, "ok"
+
+        except asyncio.TimeoutError:
+            log.warning("pool.health.timeout", backend=self.backend_name)
+            return False, "page_unresponsive"
+
+        except Exception as e:
+            error_name = type(e).__name__
+            log.warning("pool.health.failed", backend=self.backend_name, error=error_name, message=str(e))
+            return False, f"page_error:{error_name}"
 
     async def try_reconnect(self) -> bool:
         """
@@ -260,30 +388,40 @@ class BaseWorker:
 
     async def check_and_recover_work(self) -> Optional[SendResponse]:
         """
-        Check for and recover any in-progress work from before a restart.
+        Check for and recover any in-progress async jobs from before a restart.
 
-        If there's active work in state and we can navigate back to the chat,
-        try to collect the response and store it for later pickup.
+        Checks JobStore for PROCESSING jobs and attempts to navigate back to
+        the chat URL to collect the response.
 
         Returns SendResponse if work was recovered, None otherwise.
         """
         if not self.browser or not hasattr(self.browser, 'page'):
             return None
 
-        active = self.state.get_active_work(self.backend_name)
-        if not active:
+        # Check JobStore for processing jobs
+        if not self.jobs:
+            self.state.clear_active_work(self.backend_name)
             return None
 
-        chat_url = active.get("chat_url")
+        processing_job = self.jobs.get_processing_job(self.backend_name)
+        if not processing_job:
+            # No async job to recover - just clear any stale active work
+            self.state.clear_active_work(self.backend_name)
+            return None
+
+        chat_url = processing_job.chat_url
         if not chat_url:
-            # No chat URL to recover from
+            log.warning("pool.worker.recovery.no_chat_url",
+                       backend=self.backend_name,
+                       job_id=processing_job.job_id)
+            self.jobs.fail(processing_job.job_id, "No chat URL to recover from")
             self.state.clear_active_work(self.backend_name)
             return None
 
         log.info("pool.worker.recovery.attempting",
                  backend=self.backend_name,
-                 request_id=active.get("request_id"),
-                 thread_id=active.get("thread_id"),
+                 job_id=processing_job.job_id,
+                 thread_id=processing_job.thread_id,
                  chat_url=chat_url)
 
         try:
@@ -299,7 +437,6 @@ class BaseWorker:
             max_attempts = 5
 
             # Try multiple times to detect state and get response
-            # Page might need time to fully render after navigation
             for attempt in range(max_attempts):
                 log.info("pool.worker.recovery.check_attempt",
                          backend=self.backend_name,
@@ -322,7 +459,6 @@ class BaseWorker:
 
                 if is_generating:
                     log.info("pool.worker.recovery.still_generating", backend=self.backend_name)
-                    # Still generating - wait for it to complete
                     response_text = await self.browser._wait_for_response()
                     break
 
@@ -343,15 +479,13 @@ class BaseWorker:
                             delay_seconds=delay)
                     await asyncio.sleep(delay)
 
-            # If still no response after retries, try waiting anyway as last resort
-            # (the page might be in a state where indicators aren't visible but generation is happening)
+            # Last resort: wait for response with long timeout
             if not response_text:
                 log.info("pool.worker.recovery.last_resort_wait", backend=self.backend_name)
                 try:
-                    # Wait with a longer timeout for last resort (chats can take 30+ min)
                     response_text = await asyncio.wait_for(
                         self.browser._wait_for_response(),
-                        timeout=1800  # 30 minute timeout for last resort
+                        timeout=1800  # 30 minute timeout
                     )
                 except asyncio.TimeoutError:
                     log.warning("pool.worker.recovery.timeout", backend=self.backend_name)
@@ -369,20 +503,17 @@ class BaseWorker:
                             backend=self.backend_name,
                             path=str(screenshot_path))
                 except Exception as e:
-                    log.warning("pool.worker.recovery.screenshot_failed",
-                               error=str(e))
+                    log.warning("pool.worker.recovery.screenshot_failed", error=str(e))
 
+                self.jobs.fail(processing_job.job_id, "Recovery failed - no response found")
                 self.state.clear_active_work(self.backend_name)
                 return None
 
-            # Store the recovered response for later pickup
-            self.state.add_recovered_response(
-                backend=self.backend_name,
-                request_id=active.get("request_id", str(uuid.uuid4())),
-                prompt=active.get("prompt", ""),
-                response=response_text,
-                thread_id=active.get("thread_id"),
-                options=active.get("options"),
+            # Complete the job in JobStore
+            self.jobs.complete(
+                job_id=processing_job.job_id,
+                result=response_text,
+                deep_mode_used=processing_job.deep_mode,
             )
 
             # Clear active work
@@ -390,8 +521,8 @@ class BaseWorker:
 
             log.info("pool.worker.recovery.success",
                      backend=self.backend_name,
-                     request_id=active.get("request_id"),
-                     thread_id=active.get("thread_id"),
+                     job_id=processing_job.job_id,
+                     thread_id=processing_job.thread_id,
                      response_length=len(response_text))
 
             return SendResponse(
@@ -400,8 +531,8 @@ class BaseWorker:
                 recovered=True,
                 metadata=ResponseMetadata(
                     backend=self.backend_name,
-                    deep_mode_used=active.get("options", {}).get("deep_mode", False),
-                    response_time_seconds=0.0,  # Unknown for recovered responses
+                    deep_mode_used=processing_job.deep_mode,
+                    response_time_seconds=0.0,
                 ),
             )
 
@@ -410,7 +541,7 @@ class BaseWorker:
                       backend=self.backend_name,
                       error=str(e),
                       error_type=type(e).__name__)
-            # Clear the stale active work
+            self.jobs.fail(processing_job.job_id, f"Recovery error: {str(e)}")
             self.state.clear_active_work(self.backend_name)
             return None
 
@@ -421,8 +552,8 @@ class GeminiWorker(BaseWorker):
     backend_name = "gemini"
     deep_mode_method = "enable_deep_think"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
-        super().__init__(config, state, queue)
+    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
+        super().__init__(config, state, queue, jobs)
         self._session_id = None
 
     async def connect(self):
@@ -478,35 +609,6 @@ class GeminiWorker(BaseWorker):
             log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
             return False
 
-    async def check_health(self) -> tuple[bool, str]:
-        """Check if Gemini browser is healthy by verifying page is responsive."""
-        if not self.browser:
-            return False, "browser_not_initialized"
-
-        try:
-            # Check if page exists and is not closed
-            if not self.browser.page:
-                return False, "page_not_initialized"
-
-            # Try a simple page query to verify page is responsive
-            # This will throw TargetClosedError if browser crashed
-            await asyncio.wait_for(
-                self.browser.page.evaluate("() => document.readyState"),
-                timeout=5.0
-            )
-            return True, "ok"
-
-        except asyncio.TimeoutError:
-            log.warning("pool.health.timeout", backend=self.backend_name)
-            self.state.mark_authenticated(self.backend_name, False)
-            return False, "page_unresponsive"
-
-        except Exception as e:
-            error_name = type(e).__name__
-            log.warning("pool.health.failed", backend=self.backend_name, error=error_name, message=str(e))
-            self.state.mark_authenticated(self.backend_name, False)
-            return False, f"page_error:{error_name}"
-
     async def _process_request(self, request: SendRequest) -> SendResponse:
         """Process a Gemini request."""
         if not self.browser:
@@ -545,6 +647,9 @@ class GeminiWorker(BaseWorker):
                     thread_id=getattr(request, 'thread_id', None),
                     options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
                 )
+                # Also update job if processing async job
+                if self._current_job and self.jobs:
+                    self.jobs.set_chat_url(self._current_job.job_id, new_url)
 
             if self.browser.page:
                 self.browser.set_url_update_callback(on_url_change)
@@ -558,6 +663,9 @@ class GeminiWorker(BaseWorker):
                 thread_id=getattr(request, 'thread_id', None),
                 options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
             )
+            # Also set initial chat URL on job if processing async job
+            if self._current_job and self.jobs:
+                self.jobs.set_chat_url(self._current_job.job_id, chat_url)
 
             response_text = await self.browser.send_message(request.prompt)
 
@@ -599,8 +707,8 @@ class ChatGPTWorker(BaseWorker):
     backend_name = "chatgpt"
     deep_mode_method = "enable_pro_mode"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
-        super().__init__(config, state, queue)
+    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
+        super().__init__(config, state, queue, jobs)
 
     async def connect(self):
         """Connect to ChatGPT."""
@@ -648,35 +756,6 @@ class ChatGPTWorker(BaseWorker):
             log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
             return False
 
-    async def check_health(self) -> tuple[bool, str]:
-        """Check if ChatGPT browser is healthy by verifying page is responsive."""
-        if not self.browser:
-            return False, "browser_not_initialized"
-
-        try:
-            # Check if page exists and is not closed
-            if not self.browser.page:
-                return False, "page_not_initialized"
-
-            # Try a simple page query to verify page is responsive
-            # This will throw TargetClosedError if browser crashed
-            await asyncio.wait_for(
-                self.browser.page.evaluate("() => document.readyState"),
-                timeout=5.0
-            )
-            return True, "ok"
-
-        except asyncio.TimeoutError:
-            log.warning("pool.health.timeout", backend=self.backend_name)
-            self.state.mark_authenticated(self.backend_name, False)
-            return False, "page_unresponsive"
-
-        except Exception as e:
-            error_name = type(e).__name__
-            log.warning("pool.health.failed", backend=self.backend_name, error=error_name, message=str(e))
-            self.state.mark_authenticated(self.backend_name, False)
-            return False, f"page_error:{error_name}"
-
     async def _process_request(self, request: SendRequest) -> SendResponse:
         """Process a ChatGPT request."""
         if not self.browser:
@@ -719,6 +798,9 @@ class ChatGPTWorker(BaseWorker):
                     thread_id=getattr(request, 'thread_id', None),
                     options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
                 )
+                # Also update job if processing async job
+                if self._current_job and self.jobs:
+                    self.jobs.set_chat_url(self._current_job.job_id, new_url)
 
             if self.browser.page:
                 self.browser.set_url_update_callback(on_url_change)
@@ -732,6 +814,9 @@ class ChatGPTWorker(BaseWorker):
                 thread_id=getattr(request, 'thread_id', None),
                 options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
             )
+            # Also set initial chat URL on job if processing async job
+            if self._current_job and self.jobs:
+                self.jobs.set_chat_url(self._current_job.job_id, chat_url)
 
             response_text = await self.browser.send_message(request.prompt)
 
@@ -773,8 +858,8 @@ class ClaudeWorker(BaseWorker):
     backend_name = "claude"
     deep_mode_method = "enable_extended_thinking"
 
-    def __init__(self, config: dict, state: StateManager, queue: RequestQueue):
-        super().__init__(config, state, queue)
+    def __init__(self, config: dict, state: StateManager, queue: RequestQueue, jobs: Optional[JobStore] = None):
+        super().__init__(config, state, queue, jobs)
 
     async def connect(self):
         """Connect to Claude browser."""
@@ -822,34 +907,6 @@ class ClaudeWorker(BaseWorker):
             log.exception(e, "pool.worker.auth_failed", {"backend": self.backend_name})
             return False
 
-    async def check_health(self) -> tuple[bool, str]:
-        """Check if Claude browser is healthy by verifying page is responsive."""
-        if not self.browser:
-            return False, "browser_not_initialized"
-
-        try:
-            # Check if page exists and is not closed
-            if not self.browser.page:
-                return False, "page_not_initialized"
-
-            # Try a simple page query to verify page is responsive
-            await asyncio.wait_for(
-                self.browser.page.evaluate("() => document.readyState"),
-                timeout=5.0
-            )
-            return True, "ok"
-
-        except asyncio.TimeoutError:
-            log.warning("pool.health.timeout", backend=self.backend_name)
-            self.state.mark_authenticated(self.backend_name, False)
-            return False, "page_unresponsive"
-
-        except Exception as e:
-            error_name = type(e).__name__
-            log.warning("pool.health.failed", backend=self.backend_name, error=error_name, message=str(e))
-            self.state.mark_authenticated(self.backend_name, False)
-            return False, f"page_error:{error_name}"
-
     async def _process_request(self, request: SendRequest) -> SendResponse:
         """Process a Claude browser request."""
         if not self.browser:
@@ -893,6 +950,9 @@ class ClaudeWorker(BaseWorker):
                     thread_id=getattr(request, 'thread_id', None),
                     options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
                 )
+                # Also update job if processing async job
+                if self._current_job and self.jobs:
+                    self.jobs.set_chat_url(self._current_job.job_id, new_url)
 
             if self.browser.page:
                 self.browser.set_url_update_callback(on_url_change)
@@ -906,6 +966,9 @@ class ClaudeWorker(BaseWorker):
                 thread_id=getattr(request, 'thread_id', None),
                 options={"deep_mode": deep_mode_used, "new_chat": request.options.new_chat},
             )
+            # Also set initial chat URL on job if processing async job
+            if self._current_job and self.jobs:
+                self.jobs.set_chat_url(self._current_job.job_id, chat_url)
 
             response_text = await self.browser.send_message(request.prompt)
 

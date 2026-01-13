@@ -233,146 +233,6 @@ class TestActiveWorkStaleness:
 
 
 # =============================================================================
-# Recovered Responses Tests
-# =============================================================================
-
-class TestRecoveredResponses:
-    """Tests for recovered response storage and retrieval."""
-
-    def test_add_recovered_response(self, state_manager):
-        """add_recovered_response stores response correctly."""
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-123",
-            prompt="Test prompt",
-            response="This is the recovered response",
-            thread_id="thread-456",
-            options={"deep_mode": True},
-        )
-
-        responses = state_manager.get_recovered_responses()
-        assert len(responses) == 1
-        assert responses[0]["request_id"] == "gemini-123"
-        assert responses[0]["backend"] == "gemini"
-        assert responses[0]["prompt"] == "Test prompt"
-        assert responses[0]["response"] == "This is the recovered response"
-        assert responses[0]["thread_id"] == "thread-456"
-        assert responses[0]["options"]["deep_mode"] is True
-        assert "recovered_at" in responses[0]
-
-    def test_add_multiple_recovered_responses(self, state_manager):
-        """Multiple recovered responses can be stored."""
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-1",
-            prompt="Prompt 1",
-            response="Response 1",
-        )
-        state_manager.add_recovered_response(
-            backend="chatgpt",
-            request_id="chatgpt-1",
-            prompt="Prompt 2",
-            response="Response 2",
-            thread_id="thread-789",
-        )
-
-        responses = state_manager.get_recovered_responses()
-        assert len(responses) == 2
-
-    def test_get_recovered_responses_returns_copy(self, state_manager):
-        """get_recovered_responses returns a copy, not the original list."""
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-1",
-            prompt="Test",
-            response="Response",
-        )
-
-        responses = state_manager.get_recovered_responses()
-        responses.clear()
-
-        # Original should still have the response
-        assert len(state_manager.get_recovered_responses()) == 1
-
-    def test_get_recovered_responses_empty(self, state_manager):
-        """get_recovered_responses returns empty list when none exist."""
-        responses = state_manager.get_recovered_responses()
-        assert responses == []
-
-    def test_clear_recovered_response(self, state_manager):
-        """clear_recovered_response removes specific response."""
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-1",
-            prompt="Test 1",
-            response="Response 1",
-        )
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-2",
-            prompt="Test 2",
-            response="Response 2",
-        )
-
-        result = state_manager.clear_recovered_response("gemini-1")
-
-        assert result is True
-        responses = state_manager.get_recovered_responses()
-        assert len(responses) == 1
-        assert responses[0]["request_id"] == "gemini-2"
-
-    def test_clear_recovered_response_not_found(self, state_manager):
-        """clear_recovered_response returns False when not found."""
-        result = state_manager.clear_recovered_response("nonexistent")
-        assert result is False
-
-    def test_recovered_responses_persist(self, temp_state_file, sample_config):
-        """Recovered responses are saved to disk."""
-        manager = StateManager(temp_state_file, sample_config)
-        manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-123",
-            prompt="Test",
-            response="Recovered!",
-            thread_id="thread-abc",
-        )
-
-        saved = json.loads(temp_state_file.read_text())
-        assert len(saved["recovered_responses"]) == 1
-        assert saved["recovered_responses"][0]["thread_id"] == "thread-abc"
-
-    def test_filter_by_thread_id(self, state_manager):
-        """Responses can be filtered by thread_id."""
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-1",
-            prompt="Test 1",
-            response="Response 1",
-            thread_id="thread-A",
-        )
-        state_manager.add_recovered_response(
-            backend="chatgpt",
-            request_id="chatgpt-1",
-            prompt="Test 2",
-            response="Response 2",
-            thread_id="thread-B",
-        )
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-2",
-            prompt="Test 3",
-            response="Response 3",
-            thread_id="thread-A",
-        )
-
-        responses = state_manager.get_recovered_responses()
-        thread_a_responses = [r for r in responses if r["thread_id"] == "thread-A"]
-
-        assert len(thread_a_responses) == 2
-        assert all(r["thread_id"] == "thread-A" for r in thread_a_responses)
-
-
-# =============================================================================
 # Queue Persistence Tests
 # =============================================================================
 
@@ -731,7 +591,7 @@ class TestQueueManagerPersistence:
 # =============================================================================
 
 class TestWorkerCheckAndRecover:
-    """Tests for worker check_and_recover_work method."""
+    """Tests for worker check_and_recover_work method (async job-based recovery)."""
 
     @pytest.fixture
     def gemini_worker(self, sample_config, state_manager):
@@ -741,62 +601,6 @@ class TestWorkerCheckAndRecover:
         return worker
 
     @pytest.mark.asyncio
-    async def test_recover_completed_response(
-        self, gemini_worker, state_manager, mock_browser
-    ):
-        """Recovery extracts completed response from chat page."""
-        gemini_worker.browser = mock_browser
-        mock_browser.is_generating.return_value = False
-        mock_browser.try_get_response.return_value = "Completed response text"
-
-        # Set up active work
-        state_manager.set_active_work(
-            backend="gemini",
-            request_id="gemini-recover-1",
-            prompt="Original prompt",
-            chat_url="https://gemini.google.com/app/abc123",
-            thread_id="thread-recover",
-        )
-
-        result = await gemini_worker.check_and_recover_work()
-
-        assert result is not None
-        assert result.success is True
-        assert result.response == "Completed response text"
-        assert result.recovered is True
-
-        # Verify response was stored
-        responses = state_manager.get_recovered_responses()
-        assert len(responses) == 1
-        assert responses[0]["thread_id"] == "thread-recover"
-
-        # Verify active work was cleared
-        assert state_manager.get_active_work("gemini") is None
-
-    @pytest.mark.asyncio
-    async def test_recover_still_generating(
-        self, gemini_worker, state_manager, mock_browser
-    ):
-        """Recovery waits for in-progress generation."""
-        gemini_worker.browser = mock_browser
-        mock_browser.is_generating.return_value = True
-        mock_browser._wait_for_response.return_value = "Generated while waiting"
-
-        state_manager.set_active_work(
-            backend="gemini",
-            request_id="gemini-generating",
-            prompt="Long prompt",
-            chat_url="https://gemini.google.com/app/xyz789",
-        )
-
-        result = await gemini_worker.check_and_recover_work()
-
-        assert result is not None
-        assert result.success is True
-        assert result.response == "Generated while waiting"
-        mock_browser._wait_for_response.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_recover_no_active_work(self, gemini_worker, mock_browser):
         """Recovery returns None when no active work exists."""
         gemini_worker.browser = mock_browser
@@ -804,7 +608,6 @@ class TestWorkerCheckAndRecover:
         result = await gemini_worker.check_and_recover_work()
 
         assert result is None
-        mock_browser.page.goto.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_recover_no_browser(self, gemini_worker, state_manager):
@@ -862,47 +665,6 @@ class TestWorkerCheckAndRecover:
         result = await gemini_worker.check_and_recover_work()
 
         assert result is None
-        mock_browser.page.goto.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_recover_navigates_to_chat_url(
-        self, gemini_worker, state_manager, mock_browser
-    ):
-        """Recovery navigates to the stored chat URL."""
-        gemini_worker.browser = mock_browser
-        chat_url = "https://gemini.google.com/app/unique123"
-
-        state_manager.set_active_work(
-            backend="gemini",
-            request_id="gemini-nav",
-            prompt="Test",
-            chat_url=chat_url,
-        )
-
-        await gemini_worker.check_and_recover_work()
-
-        mock_browser.page.goto.assert_called_once_with(chat_url)
-
-    @pytest.mark.asyncio
-    async def test_recover_stores_thread_id(
-        self, gemini_worker, state_manager, mock_browser
-    ):
-        """Recovered response includes thread_id for correlation."""
-        gemini_worker.browser = mock_browser
-        mock_browser.try_get_response.return_value = "Response with thread"
-
-        state_manager.set_active_work(
-            backend="gemini",
-            request_id="gemini-thread",
-            prompt="Thread test",
-            chat_url="https://gemini.google.com/app/thread",
-            thread_id="important-thread-123",
-        )
-
-        await gemini_worker.check_and_recover_work()
-
-        responses = state_manager.get_recovered_responses()
-        assert responses[0]["thread_id"] == "important-thread-123"
 
     @pytest.mark.asyncio
     async def test_recover_handles_navigation_error(
@@ -924,35 +686,6 @@ class TestWorkerCheckAndRecover:
         assert result is None
         # Active work should be cleared on error
         assert state_manager.get_active_work("gemini") is None
-
-    @pytest.mark.asyncio
-    async def test_recover_timeout_saves_screenshot(
-        self, gemini_worker, state_manager, mock_browser, tmp_path
-    ):
-        """Recovery saves debug screenshot on failure."""
-        gemini_worker.browser = mock_browser
-        mock_browser.is_generating.return_value = False
-        mock_browser.try_get_response.return_value = None
-        mock_browser._wait_for_response.side_effect = asyncio.TimeoutError()
-
-        state_manager.set_active_work(
-            backend="gemini",
-            request_id="gemini-timeout",
-            prompt="Timeout test",
-            chat_url="https://gemini.google.com/app/timeout",
-        )
-
-        # Patch the screenshot path
-        with patch("src.workers.Path") as mock_path:
-            mock_debug_path = tmp_path / "debug"
-            mock_path.return_value.parent.parent = tmp_path
-            mock_debug_path.mkdir()
-
-            result = await gemini_worker.check_and_recover_work()
-
-        assert result is None
-        # Screenshot should have been attempted
-        mock_browser.page.screenshot.assert_called()
 
 
 # =============================================================================
@@ -1005,50 +738,6 @@ class TestE2ERecoveryScenarios:
         assert active is not None
         assert active["thread_id"] == "e2e-thread"
 
-    @pytest.mark.asyncio
-    async def test_concurrent_recovery_thread_isolation(self, state_manager):
-        """Multiple concurrent recoveries maintain thread isolation."""
-        # Add recovered responses for different threads
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-thread-a",
-            prompt="Thread A prompt",
-            response="Thread A response",
-            thread_id="thread-A",
-        )
-        state_manager.add_recovered_response(
-            backend="chatgpt",
-            request_id="chatgpt-thread-b",
-            prompt="Thread B prompt",
-            response="Thread B response",
-            thread_id="thread-B",
-        )
-        state_manager.add_recovered_response(
-            backend="gemini",
-            request_id="gemini-thread-a-2",
-            prompt="Thread A prompt 2",
-            response="Thread A response 2",
-            thread_id="thread-A",
-        )
-
-        all_responses = state_manager.get_recovered_responses()
-
-        # Filter by thread
-        thread_a = [r for r in all_responses if r["thread_id"] == "thread-A"]
-        thread_b = [r for r in all_responses if r["thread_id"] == "thread-B"]
-
-        assert len(thread_a) == 2
-        assert len(thread_b) == 1
-
-        # Clear one thread's responses
-        for r in thread_a:
-            state_manager.clear_recovered_response(r["request_id"])
-
-        # Thread B should still have its response
-        remaining = state_manager.get_recovered_responses()
-        assert len(remaining) == 1
-        assert remaining[0]["thread_id"] == "thread-B"
-
 
 # =============================================================================
 # State Loading on Restart Tests
@@ -1094,28 +783,3 @@ class TestStateLoadingOnRestart:
         assert work is not None
         assert work["request_id"] == "gemini-persisted"
         assert work["thread_id"] == "persisted-thread"
-
-    def test_loads_recovered_responses_on_init(self, temp_state_file, sample_config):
-        """StateManager loads recovered responses from existing file."""
-        existing_state = {
-            "gemini": {"authenticated": True, "rate_limited": False},
-            "chatgpt": {"authenticated": True, "rate_limited": False},
-            "claude": {"authenticated": True, "rate_limited": False},
-            "recovered_responses": [
-                {
-                    "request_id": "gemini-old-recovery",
-                    "backend": "gemini",
-                    "prompt": "Old prompt",
-                    "response": "Old response",
-                    "thread_id": "old-thread",
-                    "recovered_at": time.time() - 3600,
-                },
-            ],
-        }
-        temp_state_file.write_text(json.dumps(existing_state))
-
-        manager = StateManager(temp_state_file, sample_config)
-
-        responses = manager.get_recovered_responses()
-        assert len(responses) == 1
-        assert responses[0]["thread_id"] == "old-thread"

@@ -36,6 +36,17 @@ class SendRequest(BaseModel):
     thread_id: Optional[str] = None  # For tracking/recovery purposes
 
 
+class JobSubmitRequest(BaseModel):
+    """Request to submit an async job."""
+    backend: str
+    prompt: str
+    job_id: str
+    thread_id: Optional[str] = None
+    deep_mode: bool = False
+    new_chat: bool = True
+    priority: str = "normal"
+
+
 class ResponseMetadata(BaseModel):
     """Metadata about an LLM response."""
     backend: str

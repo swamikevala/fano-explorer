@@ -26,10 +26,10 @@ from .models import (
 log = get_logger("llm", "client")
 
 # Backends that require browser automation (go through pool)
-BROWSER_BACKENDS = {"gemini", "chatgpt"}
+BROWSER_BACKENDS = {"gemini", "chatgpt", "claude"}
 
 # Backends that use direct API calls
-API_BACKENDS = {"claude", "openrouter"}
+API_BACKENDS = {"openrouter"}
 
 
 class PoolUnavailableError(Exception):
@@ -128,81 +128,6 @@ class LLMClient:
         except aiohttp.ClientError as e:
             raise PoolUnavailableError(f"Could not connect to pool: {e}")
 
-    async def _poll_for_recovered(
-        self,
-        thread_id: str,
-        timeout_seconds: int = 60,
-        poll_interval: float = 3.0,
-    ) -> Optional[LLMResponse]:
-        """
-        Poll for a recovered response by thread_id.
-
-        Args:
-            thread_id: Thread ID to look for in recovered responses
-            timeout_seconds: How long to poll before giving up
-            poll_interval: Seconds between poll attempts
-
-        Returns:
-            LLMResponse if recovered response found, None otherwise
-        """
-        import time
-        start_time = time.time()
-
-        while time.time() - start_time < timeout_seconds:
-            try:
-                session = await self._get_http_session()
-                async with session.get(
-                    f"{self.pool_url}/recovered",
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        responses = data.get("responses", [])
-
-                        # Find response matching our thread_id
-                        for item in responses:
-                            if item.get("thread_id") == thread_id:
-                                log.info("llm.pool.recovered_found",
-                                        thread_id=thread_id,
-                                        request_id=item.get("request_id"))
-
-                                # Clear the recovered response
-                                request_id = item.get("request_id")
-                                try:
-                                    async with session.delete(
-                                        f"{self.pool_url}/recovered/{request_id}",
-                                        timeout=aiohttp.ClientTimeout(total=5),
-                                    ):
-                                        pass
-                                except Exception:
-                                    pass  # Best effort cleanup
-
-                                return LLMResponse(
-                                    success=True,
-                                    text=item.get("response", ""),
-                                    backend=item.get("backend"),
-                                    deep_mode_used=item.get("options", {}).get("deep_mode", False),
-                                )
-
-            except Exception as e:
-                log.debug("llm.pool.poll_attempt_failed", error=str(e))
-
-            await asyncio.sleep(poll_interval)
-
-        return None
-
-    async def _wait_for_pool(self, timeout_seconds: int = 30) -> bool:
-        """Wait for pool to become available."""
-        import time
-        start_time = time.time()
-
-        while time.time() - start_time < timeout_seconds:
-            if await self.is_pool_available():
-                return True
-            await asyncio.sleep(2)
-
-        return False
-
     async def _send_via_pool(
         self,
         backend: str,
@@ -213,7 +138,12 @@ class LLMClient:
         priority: str,
         thread_id: Optional[str] = None,
     ) -> LLMResponse:
-        """Send request via pool service (for browser backends)."""
+        """
+        Send request via pool service (legacy sync mode).
+
+        Note: For robust handling of long-running requests, use send_async() instead.
+        This method is kept for backward compatibility.
+        """
         request_data = {
             "backend": backend,
             "prompt": prompt,
@@ -247,24 +177,7 @@ class LLMClient:
                            max_retries=max_retries,
                            error=str(e))
 
-                # On connection error, the pool may have restarted
-                # Wait for it to come back and check for recovered responses
-                if thread_id:
-                    log.info("llm.pool.waiting_for_recovery", thread_id=thread_id)
-
-                    # Wait for pool to come back up
-                    if await self._wait_for_pool(timeout_seconds=30):
-                        # Poll for recovered response
-                        recovered = await self._poll_for_recovered(
-                            thread_id,
-                            timeout_seconds=60,
-                            poll_interval=3.0,
-                        )
-                        if recovered:
-                            log.info("llm.pool.recovered_success", thread_id=thread_id)
-                            return recovered
-
-                # If no recovery found or no thread_id, retry if attempts remain
+                # Retry if attempts remain
                 if attempt < max_retries:
                     log.info("llm.pool.retry_attempt",
                             attempt=attempt + 1,
@@ -438,17 +351,9 @@ class LLMClient:
         backend = backend.lower()
 
         if backend in BROWSER_BACKENDS:
-            # Route to pool service
+            # Route to pool service (gemini, chatgpt, claude)
             return await self._send_via_pool(
                 backend, prompt, deep_mode, new_chat, timeout_seconds, priority, thread_id
-            )
-
-        elif backend == "claude":
-            # Direct API call
-            return await self._send_to_claude(
-                prompt,
-                model=model or "claude-sonnet-4-20250514",
-                timeout_seconds=timeout_seconds,
             )
 
         elif backend == "openrouter":
@@ -523,7 +428,7 @@ class LLMClient:
         """
         available = []
 
-        # Check browser backends via pool
+        # Check browser backends via pool (gemini, chatgpt, claude)
         try:
             status = await self.get_pool_status()
             available.extend(status.get_available_backends())
@@ -531,8 +436,6 @@ class LLMClient:
             pass  # Pool not running, browser backends unavailable
 
         # Check API backends
-        if self._anthropic_key:
-            available.append("claude")
         if self._openrouter_key:
             available.append("openrouter")
 
@@ -576,13 +479,15 @@ class LLMClient:
         self,
         prompt: str,
         *,
-        model: str = "claude-sonnet-4-20250514",
+        extended_thinking: bool = False,
+        new_chat: bool = True,
         timeout_seconds: int = 300,
     ) -> LLMResponse:
-        """Send prompt to Claude (direct API)."""
+        """Send prompt to Claude (via pool browser)."""
         return await self.send(
             "claude", prompt,
-            model=model,
+            deep_mode=extended_thinking,
+            new_chat=new_chat,
             timeout_seconds=timeout_seconds,
         )
 
@@ -598,3 +503,241 @@ class LLMClient:
             model="deepseek/deepseek-r1",
             timeout_seconds=timeout_seconds,
         )
+
+    # --- Async Job Methods (new robust submission pattern) ---
+
+    async def submit_job(
+        self,
+        backend: str,
+        prompt: str,
+        job_id: str,
+        *,
+        thread_id: Optional[str] = None,
+        deep_mode: bool = False,
+        new_chat: bool = True,
+        priority: str = "normal",
+    ) -> dict:
+        """
+        Submit a job for async processing.
+
+        Returns immediately with job submission status.
+        Use get_job_status() or wait_for_job() to check completion.
+
+        Args:
+            backend: Which LLM ("gemini", "chatgpt", "claude")
+            prompt: The prompt text
+            job_id: Unique job identifier (for deduplication and tracking)
+            thread_id: Optional thread ID for correlation
+            deep_mode: Use deep/pro mode
+            new_chat: Start new session
+            priority: Request priority
+
+        Returns:
+            {"status": "queued" | "exists" | "cached", "job_id": str, "cached_job_id"?: str}
+
+        Raises:
+            PoolUnavailableError: If pool is not available or backend unavailable
+        """
+        if backend not in BROWSER_BACKENDS:
+            raise ValueError(f"Async jobs only support browser backends: {BROWSER_BACKENDS}")
+
+        request_data = {
+            "backend": backend,
+            "prompt": prompt,
+            "job_id": job_id,
+            "thread_id": thread_id,
+            "deep_mode": deep_mode,
+            "new_chat": new_chat,
+            "priority": priority,
+        }
+
+        try:
+            session = await self._get_http_session()
+            async with session.post(
+                f"{self.pool_url}/job/submit",
+                json=request_data,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status == 503:
+                    data = await resp.json()
+                    raise PoolUnavailableError(data.get("detail", "Backend unavailable"))
+                if resp.status == 400:
+                    data = await resp.json()
+                    raise ValueError(data.get("detail", "Bad request"))
+                resp.raise_for_status()
+                return await resp.json()
+
+        except aiohttp.ClientError as e:
+            raise PoolUnavailableError(f"Could not connect to pool: {e}")
+
+    async def get_job_status(self, job_id: str) -> Optional[dict]:
+        """
+        Get the status of a job.
+
+        Args:
+            job_id: The job ID
+
+        Returns:
+            {job_id, status, queue_position, backend, created_at, started_at, completed_at}
+            or None if job not found
+        """
+        try:
+            session = await self._get_http_session()
+            async with session.get(
+                f"{self.pool_url}/job/{job_id}/status",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 404:
+                    return None
+                resp.raise_for_status()
+                return await resp.json()
+
+        except aiohttp.ClientError as e:
+            log.warning("llm.job.status_error", job_id=job_id, error=str(e))
+            return None
+
+    async def get_job_result(self, job_id: str) -> Optional[dict]:
+        """
+        Get the result of a completed job.
+
+        Args:
+            job_id: The job ID
+
+        Returns:
+            {job_id, status, result?, error?, deep_mode_used, backend, thread_id}
+            or None if job not found
+        """
+        try:
+            session = await self._get_http_session()
+            async with session.get(
+                f"{self.pool_url}/job/{job_id}/result",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 404:
+                    return None
+                resp.raise_for_status()
+                return await resp.json()
+
+        except aiohttp.ClientError as e:
+            log.warning("llm.job.result_error", job_id=job_id, error=str(e))
+            return None
+
+    async def wait_for_job(
+        self,
+        job_id: str,
+        *,
+        poll_interval: float = 3.0,
+        timeout_seconds: int = 3600,
+    ) -> LLMResponse:
+        """
+        Wait for a job to complete by polling.
+
+        Args:
+            job_id: The job ID to wait for
+            poll_interval: Seconds between poll attempts
+            timeout_seconds: Maximum wait time before timing out
+
+        Returns:
+            LLMResponse with the result
+        """
+        import time
+        start_time = time.time()
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed > timeout_seconds:
+                return LLMResponse(
+                    success=False,
+                    error="timeout",
+                    message=f"Job {job_id} did not complete within {timeout_seconds} seconds",
+                )
+
+            result = await self.get_job_result(job_id)
+
+            if result is None:
+                return LLMResponse(
+                    success=False,
+                    error="not_found",
+                    message=f"Job {job_id} not found",
+                )
+
+            status = result.get("status")
+
+            if status == "complete":
+                return LLMResponse(
+                    success=True,
+                    text=result.get("result", ""),
+                    backend=result.get("backend"),
+                    deep_mode_used=result.get("deep_mode_used", False),
+                )
+
+            if status == "failed":
+                return LLMResponse(
+                    success=False,
+                    error="job_failed",
+                    message=result.get("error", "Unknown error"),
+                    backend=result.get("backend"),
+                )
+
+            # Still queued or processing - wait and poll again
+            await asyncio.sleep(poll_interval)
+
+    async def send_async(
+        self,
+        backend: str,
+        prompt: str,
+        job_id: str,
+        *,
+        thread_id: Optional[str] = None,
+        deep_mode: bool = False,
+        new_chat: bool = True,
+        priority: str = "normal",
+        poll_interval: float = 3.0,
+        timeout_seconds: int = 3600,
+    ) -> LLMResponse:
+        """
+        Submit a job and wait for completion.
+
+        This is a convenience method that combines submit_job() and wait_for_job().
+        Unlike send(), this uses the async job system which is more robust
+        to pool restarts and timeouts.
+
+        Args:
+            backend: Which LLM ("gemini", "chatgpt", "claude")
+            prompt: The prompt text
+            job_id: Unique job identifier
+            thread_id: Optional thread ID for correlation
+            deep_mode: Use deep/pro mode
+            new_chat: Start new session
+            priority: Request priority
+            poll_interval: Seconds between status polls
+            timeout_seconds: Maximum wait time
+
+        Returns:
+            LLMResponse with the result
+        """
+        # Handle cached result
+        try:
+            submit_result = await self.submit_job(
+                backend, prompt, job_id,
+                thread_id=thread_id,
+                deep_mode=deep_mode,
+                new_chat=new_chat,
+                priority=priority,
+            )
+        except PoolUnavailableError as e:
+            return LLMResponse(
+                success=False,
+                error="pool_unavailable",
+                message=str(e),
+                backend=backend,
+            )
+
+        # If we got a cached result, fetch from the cached job
+        if submit_result.get("status") == "cached":
+            cached_job_id = submit_result.get("cached_job_id")
+            log.info("llm.job.cache_hit", job_id=job_id, cached_job_id=cached_job_id)
+            return await self.wait_for_job(cached_job_id, poll_interval=poll_interval, timeout_seconds=timeout_seconds)
+
+        # Wait for our job to complete
+        return await self.wait_for_job(job_id, poll_interval=poll_interval, timeout_seconds=timeout_seconds)

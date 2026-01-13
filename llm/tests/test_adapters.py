@@ -19,6 +19,7 @@ def mock_client():
     """Create a mock LLMClient."""
     client = MagicMock(spec=LLMClient)
     client.send = AsyncMock()
+    client.send_async = AsyncMock()
     return client
 
 
@@ -62,7 +63,7 @@ class TestBrowserAdapter:
     async def test_send_message_success(self, mock_client):
         adapter = BrowserAdapter(mock_client, "gemini")
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=True,
             text="Hello world",
             deep_mode_used=False,
@@ -71,19 +72,19 @@ class TestBrowserAdapter:
         result = await adapter.send_message("Test prompt")
 
         assert result == "Hello world"
-        mock_client.send.assert_called_once_with(
-            "gemini",
-            "Test prompt",
-            deep_mode=False,
-            new_chat=True,
-            thread_id=None,
-        )
+        # send_async is called with a generated job_id
+        mock_client.send_async.assert_called_once()
+        call_args = mock_client.send_async.call_args
+        assert call_args[0][0] == "gemini"
+        assert call_args[0][1] == "Test prompt"
+        assert call_args.kwargs["deep_mode"] is False
+        assert call_args.kwargs["new_chat"] is True
 
     @pytest.mark.asyncio
     async def test_send_message_with_deep_think(self, mock_client):
         adapter = BrowserAdapter(mock_client, "gemini")
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=True,
             text="Deep response",
             deep_mode_used=True,
@@ -93,19 +94,14 @@ class TestBrowserAdapter:
 
         assert result == "Deep response"
         assert adapter.last_deep_mode_used is True
-        mock_client.send.assert_called_once_with(
-            "gemini",
-            "Test",
-            deep_mode=True,
-            new_chat=True,
-            thread_id=None,
-        )
+        call_args = mock_client.send_async.call_args
+        assert call_args.kwargs["deep_mode"] is True
 
     @pytest.mark.asyncio
     async def test_send_message_with_pro_mode(self, mock_client):
         adapter = BrowserAdapter(mock_client, "chatgpt")
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=True,
             text="Pro response",
             deep_mode_used=True,
@@ -113,19 +109,15 @@ class TestBrowserAdapter:
 
         result = await adapter.send_message("Test", use_pro_mode=True)
 
-        mock_client.send.assert_called_once_with(
-            "chatgpt",
-            "Test",
-            deep_mode=True,
-            new_chat=True,
-            thread_id=None,
-        )
+        call_args = mock_client.send_async.call_args
+        assert call_args[0][0] == "chatgpt"
+        assert call_args.kwargs["deep_mode"] is True
 
     @pytest.mark.asyncio
     async def test_send_message_error_raises(self, mock_client):
         adapter = BrowserAdapter(mock_client, "gemini")
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=False,
             error="rate_limited",
             message="Too many requests",
@@ -141,7 +133,7 @@ class TestBrowserAdapter:
     async def test_send_message_empty_response(self, mock_client):
         adapter = BrowserAdapter(mock_client, "gemini")
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=True,
             text=None,
         )
@@ -241,68 +233,58 @@ class TestChatGPTAdapter:
 
 
 class TestClaudeAdapter:
-    """Tests for ClaudeAdapter."""
+    """Tests for ClaudeAdapter (now a browser-based adapter)."""
 
     def test_init(self, mock_client):
         adapter = ClaudeAdapter(mock_client)
 
         assert adapter.backend == "claude"
         assert adapter.model_name == "claude"
-        assert adapter.model == "claude-sonnet-4-20250514"
-
-    def test_init_custom_model(self, mock_client):
-        adapter = ClaudeAdapter(mock_client, model="claude-opus-4-20250514")
-
-        assert adapter.model == "claude-opus-4-20250514"
 
     @pytest.mark.asyncio
     async def test_send_message_success(self, mock_client):
         adapter = ClaudeAdapter(mock_client)
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=True,
             text="Claude response",
+            deep_mode_used=False,
         )
 
         result = await adapter.send_message("Test prompt")
 
         assert result == "Claude response"
         assert adapter.last_deep_mode_used is False
-        mock_client.send.assert_called_once_with(
-            "claude",
-            "Test prompt",
-            model="claude-sonnet-4-20250514",
-        )
+        # Now uses send_async like other browser adapters
+        mock_client.send_async.assert_called_once()
+        call_args = mock_client.send_async.call_args
+        assert call_args[0][0] == "claude"
+        assert call_args[0][1] == "Test prompt"
 
     @pytest.mark.asyncio
-    async def test_send_message_ignores_deep_mode_flags(self, mock_client):
-        """Claude doesn't support deep mode, so flags are ignored."""
+    async def test_send_message_with_extended_thinking(self, mock_client):
+        """Claude now supports extended thinking via deep_mode flag."""
         adapter = ClaudeAdapter(mock_client)
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=True,
             text="Response",
+            deep_mode_used=True,
         )
 
         await adapter.send_message(
             "Test",
             use_deep_think=True,
-            use_pro_mode=True,
-            use_thinking_mode=True,
         )
 
-        # deep_mode should not be passed to send
-        mock_client.send.assert_called_once_with(
-            "claude",
-            "Test",
-            model="claude-sonnet-4-20250514",
-        )
+        call_args = mock_client.send_async.call_args
+        assert call_args.kwargs["deep_mode"] is True
 
     @pytest.mark.asyncio
     async def test_send_message_error_raises(self, mock_client):
         adapter = ClaudeAdapter(mock_client)
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=False,
             error="api_error",
             message="API error occurred",
@@ -383,7 +365,7 @@ class TestAdapterCompatibility:
         """Test typical usage flow as expected by orchestrator."""
         adapter = GeminiAdapter(mock_client)
 
-        mock_client.send.return_value = LLMResponse(
+        mock_client.send_async.return_value = LLMResponse(
             success=True,
             text="Response text",
             deep_mode_used=True,
