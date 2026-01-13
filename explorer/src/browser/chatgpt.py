@@ -102,6 +102,10 @@ class ChatGPTInterface(BaseLLMInterface):
                 "[data-message-author-role='assistant']",
                 ".markdown",
             ],
+            "file_input": [
+                "input[type='file']",
+                "input[accept*='image']",
+            ],
         })
 
     async def _check_login_status(self) -> bool:
@@ -408,7 +412,146 @@ class ChatGPTInterface(BaseLLMInterface):
         except Exception as e:
             print(f"[chatgpt] Could not set thinking effort: {e}")
 
-    async def send_message(self, message: str, use_pro_mode: bool = False, use_thinking_mode: bool = False) -> str:
+    async def _upload_images(self, images: list) -> bool:
+        """
+        Upload images to ChatGPT before sending a message.
+
+        Args:
+            images: List of ImageAttachment objects (with filename, data, media_type)
+
+        Returns:
+            True if images were uploaded successfully, False otherwise
+        """
+        if not images:
+            return True
+
+        import base64
+        import tempfile
+        import os
+
+        log.info("browser.chatgpt.image_upload.started", image_count=len(images))
+
+        try:
+            # Find the file input element
+            # ChatGPT uses a hidden file input that gets triggered by the attachment button
+            file_input_selectors = [
+                "input[type='file'][accept*='image']",
+                "input[type='file'][multiple]",
+                "input[type='file']",
+            ]
+
+            file_input = None
+            for selector in file_input_selectors:
+                file_input = await self.page.query_selector(selector)
+                if file_input:
+                    log.debug("browser.chatgpt.image_upload.input_found", selector=selector)
+                    break
+
+            if not file_input:
+                # Try clicking the attachment button to make the file input available
+                attachment_selectors = [
+                    "button[aria-label='Attach files']",
+                    "button[aria-label='Upload file']",
+                    "button[data-testid='attachment-button']",
+                    "button:has(svg path[d*='M21.44'])",  # Paperclip icon
+                    "[aria-haspopup='menu']:has(svg)",  # Menu button with icon
+                ]
+
+                for selector in attachment_selectors:
+                    try:
+                        btn = await self.page.query_selector(selector)
+                        if btn and await btn.is_visible():
+                            log.debug("browser.chatgpt.image_upload.clicking_attachment", selector=selector)
+                            await btn.click()
+                            await asyncio.sleep(0.5)
+
+                            # Now try to find the file input again
+                            for input_selector in file_input_selectors:
+                                file_input = await self.page.query_selector(input_selector)
+                                if file_input:
+                                    break
+                            if file_input:
+                                break
+                    except Exception:
+                        continue
+
+            if not file_input:
+                log.warning("browser.chatgpt.image_upload.no_file_input",
+                           image_count=len(images),
+                           tried_selectors=len(file_input_selectors))
+                return False
+
+            # Create temporary files for each image
+            temp_files = []
+            filenames = []
+            try:
+                for img in images:
+                    # Decode base64 data and write to temp file
+                    image_data = base64.b64decode(img.data if hasattr(img, 'data') else img['data'])
+                    filename = img.filename if hasattr(img, 'filename') else img['filename']
+                    filenames.append(filename)
+
+                    # Determine extension from filename or media type
+                    ext = os.path.splitext(filename)[1]
+                    if not ext:
+                        media_type = img.media_type if hasattr(img, 'media_type') else img.get('media_type', 'image/png')
+                        ext_map = {
+                            'image/png': '.png',
+                            'image/jpeg': '.jpg',
+                            'image/gif': '.gif',
+                            'image/webp': '.webp',
+                        }
+                        ext = ext_map.get(media_type, '.png')
+
+                    # Create temp file
+                    fd, temp_path = tempfile.mkstemp(suffix=ext)
+                    os.write(fd, image_data)
+                    os.close(fd)
+                    temp_files.append(temp_path)
+
+                # Upload all files at once using set_input_files
+                await file_input.set_input_files(temp_files)
+
+                # Wait for upload to process
+                await asyncio.sleep(1.0)
+
+                # Check for image preview to confirm upload
+                preview_found = False
+                preview_selectors = [
+                    "[data-testid='image-preview']",
+                    "img[alt*='Uploaded']",
+                    ".image-preview",
+                    "div[role='img']",
+                ]
+
+                for selector in preview_selectors:
+                    preview = await self.page.query_selector(selector)
+                    if preview and await preview.is_visible():
+                        preview_found = True
+                        break
+
+                log.info("browser.chatgpt.image_upload.completed",
+                        image_count=len(temp_files),
+                        filenames=filenames,
+                        preview_detected=preview_found)
+                return True
+
+            finally:
+                # Clean up temp files
+                for temp_path in temp_files:
+                    try:
+                        os.unlink(temp_path)
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            log.error("browser.chatgpt.image_upload.failed",
+                     image_count=len(images),
+                     error_type=type(e).__name__,
+                     error=str(e))
+            return False
+
+    async def send_message(self, message: str, use_pro_mode: bool = False, use_thinking_mode: bool = False, images: list = None) -> str:
         """
         Send a message to ChatGPT and wait for response.
 
@@ -416,6 +559,7 @@ class ChatGPTInterface(BaseLLMInterface):
             message: The message to send
             use_pro_mode: Whether to use Pro mode (for Round 2 deep analysis)
             use_thinking_mode: Whether to use Thinking mode (for Round 1 standard)
+            images: Optional list of ImageAttachment objects to upload with the message
 
         Returns the response text, or raises exception on error.
         Sets self.last_deep_mode_used to indicate if pro mode was used.
@@ -425,6 +569,12 @@ class ChatGPTInterface(BaseLLMInterface):
 
         # Track whether pro mode was used for this message
         self.last_deep_mode_used = False
+
+        # Upload images first if provided
+        if images:
+            upload_success = await self._upload_images(images)
+            if not upload_success:
+                print(f"[chatgpt] WARNING: Image upload failed, continuing without images")
 
         # Mode selection: Pro takes precedence over Thinking
         if use_pro_mode:
