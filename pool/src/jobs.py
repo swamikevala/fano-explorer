@@ -40,6 +40,7 @@ class Job:
     backend: str
     prompt: str
     thread_id: Optional[str] = None
+    task_type: Optional[str] = None  # "exploration" or "critique"
 
     # Options
     deep_mode: bool = False
@@ -131,6 +132,7 @@ class JobStore:
         backend: str,
         prompt: str,
         thread_id: Optional[str] = None,
+        task_type: Optional[str] = None,
         deep_mode: bool = False,
         new_chat: bool = True,
         priority: str = "normal",
@@ -175,6 +177,7 @@ class JobStore:
                 backend=backend,
                 prompt=prompt,
                 thread_id=thread_id,
+                task_type=task_type,
                 deep_mode=deep_mode,
                 new_chat=new_chat,
                 priority=priority,
@@ -403,6 +406,7 @@ class JobStore:
                         "job_id": job.job_id,
                         "backend": job.backend,
                         "thread_id": job.thread_id,
+                        "task_type": job.task_type,
                         "result": job.result,
                         "response": job.result,  # Alias for orchestrator compatibility
                         "deep_mode_used": job.deep_mode_used,

@@ -299,6 +299,7 @@ class LLMManager:
                 use_pro_mode=use_deep,
                 use_thinking_mode=not use_deep,
                 thread_id=thread_id,
+                task_type=task_type,
                 images=images,
             )
         else:
@@ -306,6 +307,7 @@ class LLMManager:
                 prompt,
                 use_deep_think=use_deep,
                 thread_id=thread_id,
+                task_type=task_type,
                 images=images,
             )
 
@@ -371,18 +373,22 @@ class LLMManager:
                     try:
                         thread = load_thread_fn(thread_id)
                         if thread:
-                            from explorer.src.models import Exchange
+                            # Determine role from task_type
+                            task_type = item.get("task_type", "exploration")
+                            if task_type == "critique":
+                                role = ExchangeRole.CRITIC
+                            else:
+                                role = ExchangeRole.EXPLORER
 
                             thread.add_exchange(
-                                Exchange(
-                                    role=ExchangeRole.LLM,
-                                    content=response_text,
-                                    model=backend,
-                                    timestamp=datetime.now(),
-                                )
+                                role=role,
+                                model=backend,
+                                prompt="[recovered]",  # Prompt not stored in recovery
+                                response=response_text,
+                                deep_mode_used=item.get("deep_mode_used", False),
                             )
                             thread.save(self.paths.explorations_dir)
-                            log.info(f"[recovery] Added recovered response to thread {thread_id}")
+                            log.info(f"[recovery] Added recovered {task_type} response to thread {thread_id}")
                     except Exception as e:
                         log.warning(
                             f"[recovery] Could not add response to thread {thread_id}: {e}"

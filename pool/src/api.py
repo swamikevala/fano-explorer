@@ -543,6 +543,7 @@ def create_app(config: dict) -> FastAPI:
             backend=request.backend,
             prompt=request.prompt,
             thread_id=request.thread_id,
+            task_type=request.task_type,
             deep_mode=request.deep_mode,
             new_chat=request.new_chat,
             priority=request.priority,

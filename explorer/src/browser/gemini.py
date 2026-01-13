@@ -710,59 +710,67 @@ class GeminiInterface(BaseLLMInterface):
                     break
 
             if not file_input:
-                # Try clicking attachment/upload button to reveal file input
-                # Gemini's UI changes frequently - try multiple selectors
-                attachment_selectors = [
-                    # Current Gemini UI (2024-2025)
-                    "button[aria-label*='Add image']",
-                    "button[aria-label*='Upload file']",
-                    "button[aria-label*='Upload']",
-                    "button[aria-label*='Attach']",
-                    "button[aria-label*='Insert']",
-                    "button[aria-label*='Add file']",
-                    # Plus button / add button
+                # Gemini uses a two-step process:
+                # 1. Click "+" button (shows "Add files" on hover)
+                # 2. Click "Upload files" from the menu
+
+                # Step 1: Click the "+" / "Add files" button
+                add_button_selectors = [
+                    "button[aria-label='Add files']",
+                    "button[aria-label*='Add files']",
                     "button[aria-label='+']",
                     "button[aria-label='Add']",
-                    "button.add-content-button",
-                    # Material icons
-                    "button[mattooltip*='image']",
-                    "button[mattooltip*='upload']",
-                    "button[mattooltip*='file']",
+                    "[aria-label='Add files']",
                     "[aria-label*='Add files']",
-                    # Icon-based selectors
-                    "button:has([data-icon='add_photo_alternate'])",
-                    "button:has([data-icon='attach_file'])",
-                    "button:has([data-icon='add'])",
-                    "button:has(mat-icon:has-text('add_photo'))",
-                    "button:has(mat-icon:has-text('attach'))",
-                    "button:has(mat-icon:has-text('add'))",
-                    # Near input area
-                    ".input-area button[aria-label*='file']",
-                    ".chat-input button",
-                    # Generic attachment icons
-                    "[data-tooltip*='Upload']",
-                    "[data-tooltip*='Image']",
-                    "[data-tooltip*='Attach']",
+                    # Fallbacks
+                    "button[mattooltip*='Add files']",
+                    "[data-tooltip*='Add files']",
                 ]
 
-                for selector in attachment_selectors:
+                add_button_clicked = False
+                for selector in add_button_selectors:
                     try:
                         btn = await self.page.query_selector(selector)
                         if btn and await btn.is_visible():
-                            log.debug("browser.gemini.image_upload.clicking_attachment", selector=selector)
+                            log.info("browser.gemini.image_upload.clicking_add_button", selector=selector)
                             await btn.click()
                             await asyncio.sleep(0.5)
-
-                            # Check for file input again
-                            for input_selector in file_input_selectors:
-                                file_input = await self.page.query_selector(input_selector)
-                                if file_input:
-                                    log.debug("browser.gemini.image_upload.input_found_after_click", selector=input_selector)
-                                    break
-                            if file_input:
-                                break
+                            add_button_clicked = True
+                            break
                     except Exception:
                         continue
+
+                if add_button_clicked:
+                    # Step 2: Click "Upload files" from the menu
+                    upload_menu_selectors = [
+                        "text='Upload files'",
+                        "button:has-text('Upload files')",
+                        "[aria-label='Upload files']",
+                        "div:has-text('Upload files')",
+                        # With paperclip icon
+                        "button:has([data-icon='attach_file']):has-text('Upload')",
+                        # Generic menu item
+                        "[role='menuitem']:has-text('Upload')",
+                        "[role='option']:has-text('Upload')",
+                    ]
+
+                    for selector in upload_menu_selectors:
+                        try:
+                            menu_item = await self.page.query_selector(selector)
+                            if menu_item and await menu_item.is_visible():
+                                log.info("browser.gemini.image_upload.clicking_upload_menu", selector=selector)
+                                await menu_item.click()
+                                await asyncio.sleep(0.5)
+                                break
+                        except Exception:
+                            continue
+
+                    # Now check for file input again
+                    for input_selector in file_input_selectors:
+                        file_input = await self.page.query_selector(input_selector)
+                        if file_input:
+                            log.info("browser.gemini.image_upload.input_found_after_menu", selector=input_selector)
+                            break
 
             if not file_input:
                 log.warning("browser.gemini.image_upload.no_file_input",

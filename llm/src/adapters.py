@@ -68,6 +68,7 @@ class BrowserAdapter:
         use_pro_mode: bool = False,
         use_thinking_mode: bool = False,
         thread_id: Optional[str] = None,
+        task_type: Optional[str] = None,
         images: Optional[list] = None,
     ) -> str:
         """
@@ -82,6 +83,7 @@ class BrowserAdapter:
             use_pro_mode: Use ChatGPT Pro mode
             use_thinking_mode: Use ChatGPT Thinking mode (ignored if pro_mode)
             thread_id: Thread ID for recovery correlation
+            task_type: Type of task ("exploration" or "critique") for recovery
             images: Optional list of ImageAttachment objects to include
 
         Returns:
@@ -98,6 +100,7 @@ class BrowserAdapter:
                  backend=self.backend,
                  job_id=job_id,
                  thread_id=thread_id,
+                 task_type=task_type,
                  deep_mode=deep_mode,
                  prompt_length=len(prompt),
                  image_count=len(images) if images else 0)
@@ -107,6 +110,7 @@ class BrowserAdapter:
             prompt,
             job_id=job_id,
             thread_id=thread_id,
+            task_type=task_type,
             deep_mode=deep_mode,
             new_chat=True,  # Each send starts fresh
             poll_interval=5.0,  # Check every 5 seconds

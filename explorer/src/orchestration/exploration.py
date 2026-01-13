@@ -125,6 +125,9 @@ class ExplorationEngine:
         """
         prompt = self._build_critique_prompt(thread)
 
+        # Get images for the thread (same logic as exploration)
+        images = self._get_thread_images(thread)
+
         # Use weighted selection for critique (prefers ChatGPT)
         available_models = llm_manager.get_available_models(check_rate_limits=False)
         selected = llm_manager.select_model_for_task("critique", available_models)
@@ -135,7 +138,8 @@ class ExplorationEngine:
             # Fallback to original model
             critique_model_name, critique_model = model_name, model
 
-        log.info(f"Critiquing [{thread.id}] with {critique_model_name}")
+        image_note = f" with {len(images)} image(s)" if images else ""
+        log.info(f"Critiquing [{thread.id}] with {critique_model_name}{image_note}")
 
         try:
             response, deep_mode_used = await llm_manager.send_message(
@@ -144,6 +148,7 @@ class ExplorationEngine:
                 prompt=prompt,
                 thread=thread,
                 task_type="critique",
+                images=images,
             )
 
             # Extract only structured sections, stripping preamble and recaps
@@ -167,12 +172,12 @@ class ExplorationEngine:
         except Exception as e:
             log.error(f"Critique failed: {e}")
 
-    def _build_exploration_prompt(self, thread: ExplorationThread) -> tuple[str, list]:
+    def _get_thread_images(self, thread: ExplorationThread) -> list:
         """
-        Build the prompt for exploration based on seed aphorisms.
+        Get image attachments for a thread based on its seeds.
 
         Returns:
-            tuple of (prompt_text, image_attachments)
+            List of ImageAttachment objects for the thread's seeds
         """
         from llm.src.models import ImageAttachment
 
@@ -181,9 +186,7 @@ class ExplorationEngine:
         # Check if this is a focused single-seed thread
         is_focused = thread.primary_question_id or thread.related_conjecture_ids
 
-        if is_focused and self.get_focused_context:
-            # Use focused context for single-seed exploration
-            context = self.get_focused_context(thread)
+        if is_focused:
             # Get images for focused seeds
             if thread.primary_question_id:
                 seed = self.axioms.get_seed_by_id(thread.primary_question_id)
@@ -196,17 +199,40 @@ class ExplorationEngine:
                     for path in self.axioms.get_seed_images(seed.id):
                         images.append(ImageAttachment.from_file(str(path)))
         elif thread.seed_axioms:
-            # Legacy: use context for all seeds in the thread
-            context = self.get_context_for_seeds(thread.seed_axioms)
-            # Get images for these specific seeds
+            # Legacy: get images for all seeds in the thread
             for seed_id in thread.seed_axioms:
                 for path in self.axioms.get_seed_images(seed_id):
                     images.append(ImageAttachment.from_file(str(path)))
         else:
-            # Use full context with all seed images
-            context, image_paths = self.axioms.get_context_with_images()
+            # Get all seed images
+            _, image_paths = self.axioms.get_context_with_images()
             for path in image_paths:
                 images.append(ImageAttachment.from_file(str(path)))
+
+        return images
+
+    def _build_exploration_prompt(self, thread: ExplorationThread) -> tuple[str, list]:
+        """
+        Build the prompt for exploration based on seed aphorisms.
+
+        Returns:
+            tuple of (prompt_text, image_attachments)
+        """
+        # Get images for the thread
+        images = self._get_thread_images(thread)
+
+        # Check if this is a focused single-seed thread
+        is_focused = thread.primary_question_id or thread.related_conjecture_ids
+
+        if is_focused and self.get_focused_context:
+            # Use focused context for single-seed exploration
+            context = self.get_focused_context(thread)
+        elif thread.seed_axioms:
+            # Legacy: use context for all seeds in the thread
+            context = self.get_context_for_seeds(thread.seed_axioms)
+        else:
+            # Use full context with all seed images
+            context, _ = self.axioms.get_context_with_images()
 
         date_prefix = datetime.now().strftime("[FANO %m-%d]")
 

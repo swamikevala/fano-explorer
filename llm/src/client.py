@@ -518,6 +518,7 @@ class LLMClient:
         job_id: str,
         *,
         thread_id: Optional[str] = None,
+        task_type: Optional[str] = None,
         deep_mode: bool = False,
         new_chat: bool = True,
         priority: str = "normal",
@@ -534,6 +535,7 @@ class LLMClient:
             prompt: The prompt text
             job_id: Unique job identifier (for deduplication and tracking)
             thread_id: Optional thread ID for correlation
+            task_type: Type of task ("exploration" or "critique") for recovery
             deep_mode: Use deep/pro mode
             new_chat: Start new session
             priority: Request priority
@@ -553,6 +555,7 @@ class LLMClient:
             "prompt": prompt,
             "job_id": job_id,
             "thread_id": thread_id,
+            "task_type": task_type,
             "deep_mode": deep_mode,
             "new_chat": new_chat,
             "priority": priority,
@@ -697,6 +700,7 @@ class LLMClient:
         job_id: str,
         *,
         thread_id: Optional[str] = None,
+        task_type: Optional[str] = None,
         deep_mode: bool = False,
         new_chat: bool = True,
         priority: str = "normal",
@@ -716,6 +720,7 @@ class LLMClient:
             prompt: The prompt text
             job_id: Unique job identifier
             thread_id: Optional thread ID for correlation
+            task_type: Type of task ("exploration" or "critique") for recovery
             deep_mode: Use deep/pro mode
             new_chat: Start new session
             priority: Request priority
@@ -731,6 +736,7 @@ class LLMClient:
             submit_result = await self.submit_job(
                 backend, prompt, job_id,
                 thread_id=thread_id,
+                task_type=task_type,
                 deep_mode=deep_mode,
                 new_chat=new_chat,
                 priority=priority,

@@ -50,6 +50,7 @@ class JobSubmitRequest(BaseModel):
     prompt: str
     job_id: str
     thread_id: Optional[str] = None
+    task_type: Optional[str] = None  # "exploration" or "critique" for recovery
     deep_mode: bool = False
     new_chat: bool = True
     priority: str = "normal"
