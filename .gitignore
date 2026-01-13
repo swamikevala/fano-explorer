@@ -29,7 +29,24 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Exploration data (optional - you may want to keep this)
-# explorer/data/explorations/
-# explorer/data/chunks/
+# Exploration data (generated at runtime)
+explorer/data/explorations/
+explorer/data/chunks/
+explorer/data/insights/
+explorer/data/reviews/
+
+# Pool state files
+pool/jobs_state.json
+pool/queue_state.json
+pool/debug/
+
+# Output logs
+*.log
+pool_output.log
+control/restart.log
+
+# Temp files
+tmpclaude-*-cwd
+.claude/scripts/
+
 fano.egg-info/
