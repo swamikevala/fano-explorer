@@ -41,6 +41,166 @@ def api_explorer_stats():
     return jsonify(get_explorer_stats())
 
 
+@bp.route("/pipeline")
+def api_explorer_pipeline():
+    """Get pipeline status showing counts at each lifecycle stage."""
+    from datetime import datetime
+
+    explorations_dir = EXPLORER_DATA_DIR / "explorations"
+
+    # Thread counts by status
+    thread_counts = {
+        "active": 0,
+        "chunk_ready": 0,
+        "archived": 0,
+    }
+
+    # Track threads needing extraction (chunk_ready but not extracted)
+    awaiting_extraction = 0
+
+    if explorations_dir.exists():
+        for json_file in explorations_dir.glob("*.json"):
+            try:
+                data = load_insight_json(json_file)
+                if data:
+                    status = data.get("status", "active")
+                    if status in thread_counts:
+                        thread_counts[status] += 1
+                    if status == "chunk_ready" and not data.get("chunks_extracted", False):
+                        awaiting_extraction += 1
+            except Exception:
+                pass
+
+    # Insight counts by status
+    insight_counts = {
+        "pending": 0,
+        "blessed": 0,
+        "interesting": 0,
+        "rejected": 0,
+        "disputed": 0,
+        "reviewing": 0,
+    }
+    insights_dir = EXPLORER_DATA_DIR / "chunks" / "insights"
+    for status in insight_counts:
+        status_dir = insights_dir / status
+        if status_dir.exists():
+            insight_counts[status] = len(list(status_dir.glob("*.json")))
+
+    # Also check reviews/disputed for disputed reviews
+    disputed_reviews_dir = EXPLORER_DATA_DIR / "reviews" / "disputed"
+    if disputed_reviews_dir.exists():
+        insight_counts["disputed"] = len(list(disputed_reviews_dir.glob("*.json")))
+
+    # Get seed count
+    store = get_axiom_store()
+    seed_count = len(store.get_seed_aphorisms())
+
+    return jsonify({
+        "seeds": seed_count,
+        "threads": thread_counts,
+        "awaiting_extraction": awaiting_extraction,
+        "insights": insight_counts,
+        "pipeline": [
+            {"stage": "seeds", "label": "Seeds", "count": seed_count},
+            {"stage": "exploring", "label": "Exploring", "count": thread_counts["active"]},
+            {"stage": "synthesizing", "label": "Synthesizing", "count": awaiting_extraction},
+            {"stage": "pending", "label": "Pending Review", "count": insight_counts["pending"]},
+            {"stage": "blessed", "label": "Blessed", "count": insight_counts["blessed"]},
+        ],
+    })
+
+
+@bp.route("/threads")
+def api_explorer_all_threads():
+    """Get all exploration threads with optional status filter."""
+    from datetime import datetime
+
+    status_filter = request.args.get("status")  # active, chunk_ready, archived, or None for all
+
+    threads = []
+    explorations_dir = EXPLORER_DATA_DIR / "explorations"
+
+    if explorations_dir.exists():
+        for json_file in explorations_dir.glob("*.json"):
+            try:
+                data = load_insight_json(json_file)
+                if not data:
+                    continue
+
+                thread_status = data.get("status", "active")
+
+                # Apply filter if specified
+                if status_filter and thread_status != status_filter:
+                    continue
+
+                exchanges = data.get("exchanges", [])
+                last_exchange = exchanges[-1] if exchanges else None
+
+                # Determine current activity based on status
+                if thread_status == "active":
+                    if not exchanges:
+                        current_activity = "waiting to start"
+                    elif last_exchange.get("role") == "critic":
+                        current_activity = "needs exploration"
+                    else:
+                        current_activity = "needs critique"
+                elif thread_status == "chunk_ready":
+                    if data.get("chunks_extracted", False):
+                        current_activity = "awaiting review"
+                    else:
+                        current_activity = "awaiting extraction"
+                else:
+                    current_activity = "completed"
+
+                # Get focus seed info
+                focus_info = None
+                if data.get("primary_question_id"):
+                    focus_info = f"Question: {data['primary_question_id']}"
+                elif data.get("related_conjecture_ids"):
+                    focus_info = f"Conjecture: {data['related_conjecture_ids'][0]}"
+
+                # Calculate time since last activity
+                updated_at = data.get("updated_at", data.get("created_at"))
+                time_ago = ""
+                if updated_at:
+                    try:
+                        updated = datetime.fromisoformat(updated_at)
+                        delta = datetime.now() - updated
+                        if delta.total_seconds() < 60:
+                            time_ago = f"{int(delta.total_seconds())}s ago"
+                        elif delta.total_seconds() < 3600:
+                            time_ago = f"{int(delta.total_seconds() / 60)}m ago"
+                        elif delta.total_seconds() < 86400:
+                            time_ago = f"{int(delta.total_seconds() / 3600)}h ago"
+                        else:
+                            time_ago = f"{int(delta.total_seconds() / 86400)}d ago"
+                    except Exception:
+                        pass
+
+                threads.append({
+                    "id": data.get("id", json_file.stem),
+                    "topic": data.get("topic", "Unknown"),
+                    "status": thread_status,
+                    "focus": focus_info,
+                    "priority": data.get("priority", 5),
+                    "exchange_count": len(exchanges),
+                    "current_activity": current_activity,
+                    "last_model": last_exchange.get("model") if last_exchange else None,
+                    "last_role": last_exchange.get("role") if last_exchange else None,
+                    "time_ago": time_ago,
+                    "updated_at": updated_at,
+                    "created_at": data.get("created_at", ""),
+                    "chunks_extracted": data.get("chunks_extracted", False),
+                })
+            except Exception:
+                pass
+
+    # Sort by updated_at (most recent first)
+    threads.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
+
+    return jsonify({"threads": threads, "count": len(threads), "filter": status_filter})
+
+
 @bp.route("/threads/active")
 def api_explorer_active_threads():
     """Get active exploration threads with their current state."""

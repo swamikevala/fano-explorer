@@ -39,3 +39,25 @@ def api_pool_status():
         return jsonify(resp.json())
     except requests.RequestException:
         return jsonify({"error": "Pool not available"}), 503
+
+
+@bp.route("/kick/<backend>", methods=["POST"])
+def api_pool_kick(backend):
+    """Kick a stuck worker - takes screenshot, fails job, reconnects browser."""
+    try:
+        resp = requests.post(f"{POOL_URL}/kick/{backend}", timeout=30)
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except requests.RequestException as e:
+        return jsonify({"error": f"Pool not available: {e}"}), 503
+
+
+@bp.route("/recovery/status")
+def api_pool_recovery_status():
+    """Proxy to pool /recovery/status endpoint."""
+    try:
+        resp = requests.get(f"{POOL_URL}/recovery/status", timeout=2)
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except requests.RequestException:
+        return jsonify({"error": "Pool not available"}), 503

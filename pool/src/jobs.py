@@ -388,6 +388,47 @@ class JobStore:
                 log.info("pool.jobs.cleanup", removed_count=len(to_remove))
                 self._persist()
 
+    def get_completed_jobs(self) -> list[dict]:
+        """
+        Get all completed jobs (for recovery after orchestrator restart).
+
+        Returns:
+            List of completed job info with results.
+        """
+        with self._lock:
+            results = []
+            for job_id, job in self._jobs.items():
+                if job.status == JobStatus.COMPLETE:
+                    results.append({
+                        "job_id": job.job_id,
+                        "backend": job.backend,
+                        "thread_id": job.thread_id,
+                        "result": job.result,
+                        "response": job.result,  # Alias for orchestrator compatibility
+                        "deep_mode_used": job.deep_mode_used,
+                        "completed_at": job.completed_at,
+                        "request_id": job.job_id,  # For compatibility
+                    })
+            return results
+
+    def remove_job(self, job_id: str) -> bool:
+        """
+        Remove a job from the store (after recovery pickup).
+
+        Returns:
+            True if job was removed, False if not found.
+        """
+        with self._lock:
+            job = self._jobs.pop(job_id, None)
+            if job:
+                if job.content_hash:
+                    self._content_cache.pop(job.content_hash, None)
+                    self._cache_times.pop(job.content_hash, None)
+                log.info("pool.jobs.removed", job_id=job_id)
+                self._persist()
+                return True
+            return False
+
     def _persist(self):
         """Persist jobs to disk."""
         if not self.persist_path:

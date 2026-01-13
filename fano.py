@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 
 FANO_ROOT = Path(__file__).resolve().parent
+LOGS_DIR = FANO_ROOT / "logs"
 
 # Load .env file
 env_path = FANO_ROOT / ".env"
@@ -75,20 +76,24 @@ def print_banner():
 def start_pool() -> subprocess.Popen:
     """Start the pool service."""
     print("  Starting pool service...")
-    pool_script = FANO_ROOT / "pool" / "run_pool.py"
 
-    # Don't capture stdout - let pool output go to console so we can see errors
-    # and avoid buffer blocking issues
+    # Ensure logs directory exists
+    LOGS_DIR.mkdir(exist_ok=True)
+    log_file = open(LOGS_DIR / "pool.log", "w", encoding="utf-8", buffering=1)
+
+    pool_script = FANO_ROOT / "pool" / "run_pool.py"
     proc = subprocess.Popen(
         [sys.executable, str(pool_script)],
         cwd=str(FANO_ROOT),
-        # No stdout/stderr capture - output goes to console
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
     time.sleep(3)  # Give it time to start
     if proc.poll() is not None:
-        print("  [ERROR] Pool failed to start!")
+        print("  [ERROR] Pool failed to start! Check logs/pool.log")
         return None
     print(f"  Pool started (PID: {proc.pid})")
+    print(f"  Pool logs: logs/pool.log")
     return proc
 
 

@@ -1,105 +1,51 @@
 """
-Claude API client for the review panel.
+Claude browser client for the review panel.
 
-Provides Claude access via the Anthropic API for review panel operations.
+Provides Claude access via the browser pool for review panel operations.
 """
 
 import asyncio
-import os
 from typing import Optional
 
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import aiohttp
 
 from shared.logging import get_logger
 
 log = get_logger("explorer", "review_panel.claude_api")
 
+# Pool service URL
+POOL_URL = "http://127.0.0.1:9000"
+
 
 class ClaudeReviewer:
     """
-    Claude API client for review panel.
+    Claude browser client for review panel.
 
-    Uses the Anthropic Python SDK to communicate with Claude.
+    Uses the browser pool service to communicate with Claude via playwright.
     Supports extended thinking for deep analysis rounds.
     """
 
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: str = "claude-opus-4-20250514",
-    ):
+    def __init__(self, pool_url: str = POOL_URL):
         """
         Initialize the Claude reviewer.
 
         Args:
-            api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
-            model: Claude model to use
+            pool_url: URL of the pool service
         """
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self.model = model
-        self.client = None
-        self._initialized = False
+        self.pool_url = pool_url.rstrip("/")
+        self._session: Optional[aiohttp.ClientSession] = None
 
-    def _ensure_client(self):
-        """Lazily initialize the Anthropic client."""
-        if self._initialized:
-            return
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create HTTP session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
-        if not self.api_key:
-            raise ValueError(
-                "Claude API key not provided. Set ANTHROPIC_API_KEY environment variable "
-                "or pass api_key to ClaudeReviewer."
-            )
-
-        try:
-            import anthropic
-            import httpx
-
-            # Check for SSL bypass flag (for corporate proxies)
-            disable_ssl = os.environ.get("ANTHROPIC_DISABLE_SSL_VERIFY", "").lower() in ("1", "true", "yes")
-
-            if disable_ssl:
-                log.warning("[claude] SSL verification DISABLED - use only for corporate proxy issues")
-                # Create custom httpx client without SSL verification
-                http_client = httpx.Client(verify=False)
-                self.client = anthropic.Anthropic(api_key=self.api_key, http_client=http_client)
-            else:
-                self.client = anthropic.Anthropic(api_key=self.api_key)
-
-            self._initialized = True
-            log.info(f"[claude] Initialized with model {self.model}")
-        except ImportError:
-            raise ImportError(
-                "anthropic package not installed. Run: pip install anthropic"
-            )
-
-    async def _stream_extended_thinking(self, prompt: str) -> str:
-        """
-        Stream an extended thinking request.
-
-        Streaming is required for operations that may take longer than 10 minutes.
-        """
-        def _do_stream():
-            text_content = ""
-            with self.client.messages.stream(
-                model=self.model,
-                max_tokens=16000,
-                thinking={
-                    "type": "enabled",
-                    "budget_tokens": 10000,
-                },
-                messages=[{"role": "user", "content": prompt}],
-            ) as stream:
-                for event in stream:
-                    # Collect text content from content_block_delta events
-                    if hasattr(event, "type"):
-                        if event.type == "content_block_delta":
-                            delta = event.delta
-                            if hasattr(delta, "text"):
-                                text_content += delta.text
-            return text_content
-
-        return await asyncio.to_thread(_do_stream)
+    async def close(self):
+        """Close HTTP session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def send_message(
         self,
@@ -108,66 +54,68 @@ class ClaudeReviewer:
         max_tokens: int = 4096,
     ) -> str:
         """
-        Send a message to Claude and get a response.
+        Send a message to Claude via the browser pool.
 
         Args:
             prompt: The prompt to send
             extended_thinking: Whether to use extended thinking mode
-            max_tokens: Maximum tokens in response
+            max_tokens: Maximum tokens in response (ignored for browser mode)
 
         Returns:
             Claude's response text
         """
-        self._ensure_client()
-
         log.info(f"[claude] Sending message ({len(prompt)} chars, extended_thinking={extended_thinking})")
 
-        # Retry logic for connection errors
+        request_data = {
+            "backend": "claude",
+            "prompt": prompt,
+            "options": {
+                "deep_mode": extended_thinking,
+                "new_chat": True,
+                "timeout_seconds": 3600,  # Long timeout for extended thinking
+                "priority": "normal",
+            },
+        }
+
         max_retries = 3
         last_error = None
 
         for attempt in range(max_retries):
             try:
-                # Recreate client on retry to get fresh connection
-                if attempt > 0:
-                    import anthropic
-                    self.client = anthropic.Anthropic(api_key=self.api_key)
-                    log.info(f"[claude] Recreated client for retry attempt {attempt + 1}")
+                session = await self._get_session()
+                async with session.post(
+                    f"{self.pool_url}/send",
+                    json=request_data,
+                    timeout=aiohttp.ClientTimeout(total=3630),  # Slightly longer than request timeout
+                ) as resp:
+                    data = await resp.json()
 
-                if extended_thinking:
-                    # Use streaming for extended thinking (required for long operations)
-                    text_content = await self._stream_extended_thinking(prompt)
-                else:
-                    # Standard message (non-streaming)
-                    response = await asyncio.to_thread(
-                        self.client.messages.create,
-                        model=self.model,
-                        max_tokens=max_tokens,
-                        messages=[{"role": "user", "content": prompt}],
-                    )
+                    if not data.get("success"):
+                        error = data.get("error", "unknown")
+                        message = data.get("message", "No message")
+                        log.error(f"[claude] Request failed: {error}: {message}")
+                        raise RuntimeError(f"{error}: {message}")
 
-                    # Extract text from response
-                    text_content = ""
-                    for block in response.content:
-                        if hasattr(block, "text"):
-                            text_content += block.text
+                    response_text = data.get("response", "")
+                    log.info(f"[claude] Got response ({len(response_text)} chars)")
+                    return response_text
 
-                log.info(f"[claude] Got response ({len(text_content)} chars)")
-                return text_content
-
-            except Exception as e:
+            except aiohttp.ClientError as e:
                 last_error = e
                 error_str = str(e).lower()
 
-                # Only retry on connection errors
-                if "connection" in error_str or "timeout" in error_str:
-                    wait_time = 2 ** attempt  # 1, 2, 4 seconds
+                # Retry on connection errors
+                if "connection" in error_str or attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
                     log.warning(f"[claude] Connection error (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
                     await asyncio.sleep(wait_time)
                 else:
-                    # Non-connection error, don't retry
                     log.error(f"[claude] Error: {type(e).__name__}: {e}")
                     raise
+
+            except asyncio.TimeoutError:
+                log.error("[claude] Request timed out")
+                raise RuntimeError("Request timed out")
 
         # All retries exhausted
         log.error(f"[claude] All {max_retries} attempts failed: {last_error}")
@@ -191,15 +139,30 @@ class ClaudeReviewer:
         return await self.send_message(prompt, extended_thinking=extended_thinking)
 
     def is_available(self) -> bool:
-        """Check if Claude API is available."""
+        """
+        Check if Claude is available.
+
+        Returns True since pool availability is checked at request time.
+        For a proper async check, use check_available().
+        """
+        return True
+
+    async def check_available(self) -> bool:
+        """Async check if Claude is available via the pool."""
         try:
-            self._ensure_client()
-            return True
-        except (ValueError, ImportError) as e:
-            log.warning(f"[claude] is_available check failed: {e}")
-            return False
+            session = await self._get_session()
+            async with session.get(
+                f"{self.pool_url}/status",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
+                backends = data.get("backends", {})
+                claude_status = backends.get("claude", {})
+                return claude_status.get("available", False) and claude_status.get("authenticated", False)
         except Exception as e:
-            log.error(f"[claude] Unexpected error in is_available: {e}")
+            log.warning(f"[claude] check_available failed: {e}")
             return False
 
 
@@ -208,21 +171,9 @@ def get_claude_reviewer(config: dict = None) -> Optional[ClaudeReviewer]:
     Factory function to create a ClaudeReviewer from config.
 
     Args:
-        config: Review panel configuration
+        config: Review panel configuration (unused, kept for compatibility)
 
     Returns:
-        ClaudeReviewer instance or None if not configured
+        ClaudeReviewer instance
     """
-    config = config or {}
-
-    # Get API key from environment variable specified in config
-    api_key_env = config.get("claude_api_key_env", "ANTHROPIC_API_KEY")
-    api_key = os.environ.get(api_key_env)
-
-    if not api_key:
-        log.warning(f"[claude] {api_key_env} not set, Claude review unavailable")
-        return None
-
-    model = config.get("claude_model", "claude-opus-4-20250514")
-
-    return ClaudeReviewer(api_key=api_key, model=model)
+    return ClaudeReviewer()

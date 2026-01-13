@@ -7,6 +7,8 @@
       "Bash(git add:*)",
       "Bash(git commit*)",
       "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
       "Bash(python -c:*)",
       "Bash(python:*)",
       "Bash(cat:*)",
@@ -16,6 +18,7 @@
       "Bash(playwright install:*)",
       "Bash(taskkill:*)",
       "Bash(cmd //c \"taskkill /F /IM chrome.exe\")",
+      "Bash(cmd //c \"taskkill:*)",
       "Bash(timeout 20 python:*)",
       "Bash(ls:*)",
       "Bash(head:*)",
@@ -33,7 +36,17 @@
       "Bash(timeout 45 python:*)",
       "Bash(timeout 15 python:*)",
       "Bash(timeout 8 python:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(./scripts/svc.sh:*)",
+      "Bash(./scripts/restart_pool.sh:*)",
+      "Bash(./scripts/restart_control.sh:*)",
+      "Bash(./scripts/run_py.sh:*)",
+      "Bash(bash scripts/svc.sh:*)",
+      "Bash(bash scripts/restart_pool.sh:*)",
+      "Bash(bash scripts/restart_control.sh:*)",
+      "Bash(bash scripts/run_py.sh:*)",
+      "Bash(cd /c/Users/swami.kevala/maths/Mathematics/fano-project/fano && python:*)",
+      "Bash(sleep:*)"
     ]
   }
 }

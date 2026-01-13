@@ -8,7 +8,7 @@ This module centralizes:
 - Thread context building
 """
 
-from typing import Optional
+from typing import Optional, Set
 
 from shared.logging import get_logger
 
@@ -47,7 +47,8 @@ class ThreadManager:
         Load all active exploration threads.
 
         Returns:
-            List of active threads, limited by max_active_threads config.
+            List of active threads sorted by priority (highest first),
+            limited by max_active_threads config.
         """
         threads = []
 
@@ -60,28 +61,68 @@ class ThreadManager:
                 except Exception as e:
                     log.warning(f"Could not load thread {filepath}: {e}")
 
+        # Sort by priority (highest first) before limiting
+        threads.sort(key=lambda t: getattr(t, 'priority', 0), reverse=True)
+
         return threads[: self.config.get("max_active_threads", 5)]
 
-    def select_thread(self) -> Optional[ExplorationThread]:
+    def select_thread(self, exclude_ids: Optional[Set[str]] = None) -> Optional[ExplorationThread]:
         """
-        Select an active thread to work on.
+        Select an active thread to work on, or return None if a higher-priority
+        unexplored seed should be spawned instead.
 
-        Prioritizes threads that need exploration or critique.
+        Compares priorities across:
+        - Active threads needing work
+        - Unexplored seeds waiting to be started
+
+        Args:
+            exclude_ids: Set of thread IDs to exclude from selection.
+                        Used when assigning multiple threads to different models.
 
         Returns:
-            Selected thread, or None if no threads available.
+            Selected thread, or None if no threads available or if a
+            higher-priority unexplored seed exists (triggers spawning).
         """
         threads = self.load_active_threads()
 
-        if not threads:
-            return None
+        # Filter out excluded threads
+        if exclude_ids:
+            threads = [t for t in threads if t.id not in exclude_ids]
 
-        # Prioritize threads that need work
+        # Sort by priority (highest first), then by needs_work status
+        if threads:
+            threads.sort(
+                key=lambda t: (
+                    getattr(t, 'priority', 0),  # Higher priority first
+                    t.needs_exploration or t.needs_critique,  # Needs work second
+                ),
+                reverse=True
+            )
+
+        # Find highest priority thread that needs work
+        best_thread = None
+        best_thread_priority = -1
         for thread in threads:
             if thread.needs_exploration or thread.needs_critique:
-                return thread
+                best_thread = thread
+                best_thread_priority = getattr(thread, 'priority', 0)
+                break
 
-        return threads[0] if threads else None
+        # Check if there's a higher-priority unexplored seed
+        next_seed = self.select_next_seed()
+        if next_seed:
+            seed_priority = getattr(next_seed, 'priority', 0)
+            if seed_priority > best_thread_priority:
+                log.info(
+                    "thread_manager.seed_priority_higher",
+                    seed_id=next_seed.id,
+                    seed_priority=seed_priority,
+                    thread_priority=best_thread_priority,
+                )
+                # Return None to trigger spawning the higher-priority seed
+                return None
+
+        return best_thread
 
     def load_thread_by_id(self, thread_id: str) -> Optional[ExplorationThread]:
         """

@@ -298,55 +298,143 @@ class Orchestrator:
         log.info(f"[backlog] Completed processing {len(unprocessed)} threads")
 
     async def _exploration_cycle(self):
-        """Single cycle of the exploration loop."""
+        """
+        Single cycle of the exploration loop.
+
+        Runs work in parallel across all available models, assigning
+        each model to a different thread for maximum throughput.
+        """
         # Ensure we're connected to pool (reconnect if needed)
         await self.llm_manager.ensure_connected()
 
         available_models = self.llm_manager.get_available_models()
         log.info(
-            f"Available models: {list(available_models.keys())} "
-            f"(gemini={self.llm_manager.gemini is not None})"
+            "exploration.cycle.start",
+            available_models=list(available_models.keys()),
+            gemini_connected=self.llm_manager.gemini is not None,
         )
 
         if not available_models:
-            log.info("All models rate-limited, waiting...")
+            log.info("exploration.cycle.all_rate_limited")
             await asyncio.sleep(self.orchestration_config["backoff_base"])
             return
 
-        # Get or create a thread to work on
-        thread = self.thread_manager.select_thread()
+        # Collect work items: (thread, model_name, model, task_type)
+        work_items = []
+        assigned_thread_ids = set()
 
-        if thread is None:
-            # Spawn a new thread
-            thread = self.thread_manager.spawn_new_thread()
-            log.info(f"Spawned new thread: {thread.topic[:60]}...")
+        for model_name, model in available_models.items():
+            # Select a thread not already assigned to another model
+            thread = self.thread_manager.select_thread(exclude_ids=assigned_thread_ids)
 
-        # Perform work on the thread
-        if thread.needs_exploration:
-            model_name = self.llm_manager.select_model_for_task("exploration", available_models)
-            if model_name:
-                model = available_models[model_name]
-                await self.exploration_engine.do_exploration(
-                    thread, model_name, model, self.llm_manager
+            if thread is None:
+                # Spawn a new thread if none available
+                thread = self.thread_manager.spawn_new_thread()
+                log.info(
+                    "exploration.thread.spawned",
+                    thread_id=thread.id,
+                    topic=thread.topic[:60],
                 )
-        elif thread.needs_critique:
-            # Use first available model (critique engine does its own selection)
-            model_name = list(available_models.keys())[0]
-            model = available_models[model_name]
+
+            assigned_thread_ids.add(thread.id)
+
+            # Determine what work this thread needs
+            if thread.needs_exploration:
+                work_items.append((thread, model_name, model, "exploration"))
+            elif thread.needs_critique:
+                work_items.append((thread, model_name, model, "critique"))
+            else:
+                log.info(
+                    "exploration.thread.no_work_needed",
+                    thread_id=thread.id,
+                    model=model_name,
+                )
+
+        if not work_items:
+            log.info("exploration.cycle.no_work")
+            return
+
+        log.info(
+            "exploration.cycle.parallel_work",
+            work_count=len(work_items),
+            assignments=[(w[1], w[0].id[:8], w[3]) for w in work_items],
+        )
+
+        # Run all work in parallel
+        tasks = []
+        for thread, model_name, model, task_type in work_items:
+            if task_type == "exploration":
+                task = self._do_exploration_and_save(thread, model_name, model)
+            else:
+                task = self._do_critique_and_save(thread, model_name, model)
+            tasks.append(task)
+
+        # Wait for all parallel work to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Log any exceptions
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                thread, model_name, _, task_type = work_items[i]
+                log.error(
+                    "exploration.parallel_task.failed",
+                    thread_id=thread.id,
+                    model=model_name,
+                    task_type=task_type,
+                    error=str(result),
+                )
+
+    async def _do_exploration_and_save(self, thread, model_name, model):
+        """Run exploration on a thread and save state."""
+        try:
+            await self.exploration_engine.do_exploration(
+                thread, model_name, model, self.llm_manager
+            )
+
+            # Check if thread is ready for synthesis
+            if self.synthesis_engine.is_chunk_ready(thread):
+                await self.synthesis_engine.synthesize_chunk(
+                    thread,
+                    self.llm_manager,
+                    extract_and_review_fn=self._extract_and_review_wrapper,
+                )
+
+            # Save thread state
+            thread.save(self.paths.data_dir)
+        except Exception as e:
+            log.error(
+                "exploration.do_exploration.failed",
+                thread_id=thread.id,
+                model=model_name,
+                error=str(e),
+            )
+            raise
+
+    async def _do_critique_and_save(self, thread, model_name, model):
+        """Run critique on a thread and save state."""
+        try:
             await self.exploration_engine.do_critique(
                 thread, model_name, model, self.llm_manager
             )
 
-        # Check if thread is ready for synthesis
-        if self.synthesis_engine.is_chunk_ready(thread):
-            await self.synthesis_engine.synthesize_chunk(
-                thread,
-                self.llm_manager,
-                extract_and_review_fn=self._extract_and_review_wrapper,
-            )
+            # Check if thread is ready for synthesis
+            if self.synthesis_engine.is_chunk_ready(thread):
+                await self.synthesis_engine.synthesize_chunk(
+                    thread,
+                    self.llm_manager,
+                    extract_and_review_fn=self._extract_and_review_wrapper,
+                )
 
-        # Save thread state
-        thread.save(self.paths.data_dir)
+            # Save thread state
+            thread.save(self.paths.data_dir)
+        except Exception as e:
+            log.error(
+                "exploration.do_critique.failed",
+                thread_id=thread.id,
+                model=model_name,
+                error=str(e),
+            )
+            raise
 
     async def _extract_and_review_wrapper(self, thread, model_name, model):
         """Wrapper for insight processor extract_and_review."""

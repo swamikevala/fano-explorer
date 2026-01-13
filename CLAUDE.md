@@ -3,16 +3,40 @@
 ## Project Overview
 
 Fano is a multi-component platform for mathematical exploration and documentation:
+
 - **Explorer**: Discovers and reviews mathematical insights using LLM collaboration
 - **Documenter**: Generates and maintains a living mathematical document
 - **Control**: Web UI for monitoring and managing all components
 - **Pool**: Browser pool for web-based LLM interactions
+
+## Operating System
+
+We are running this in a python venv in Windows using git bash terminal, so terminal commands should be bash commands
+
+## Permission Fatigue
+
+If you notice you're repeatedly asking me permission for similar commands:
+
+1. Suggest creating a wrapper script in `scripts/cc/` that handles the pattern
+2. Show me the proposed script and the allow rule for settings.local.json
+3. Wait for my approval before creating it
+4. Once approved, use the wrapper instead of the raw command
+
+Keep wrappers minimal — just enough to avoid the permission prompt (background processes, redirects, etc). Pass arguments through where safe.
+
+Don't create wrappers for anything involving:
+
+- Paths outside this project
+- Credentials, secrets, .env files
+- sudo/admin elevation
+- rm -rf or other destructive patterns
 
 ## Logging Standards
 
 **All logging must be in structured, machine-readable format (JSON) to enable automated analysis.**
 
 ### Why
+
 - Automated agents will analyze logs to diagnose issues and suggest fixes
 - Structured logs enable programmatic querying and alerting
 - Performance metrics can be extracted and tracked over time
@@ -49,6 +73,7 @@ log.info("Generated section prereq-123 with 450 words in 1.2s")
 Use dot-separated hierarchical names: `{component}.{module}.{action}`
 
 Examples:
+
 - `explorer.review.started`
 - `documenter.section.saved`
 - `control.api.request`
@@ -57,6 +82,7 @@ Examples:
 ### Required Fields
 
 Every log event should include relevant context:
+
 - Identifiers (section_id, insight_id, etc.)
 - Counts and metrics (word_count, duration_ms, retry_count)
 - Status information (success, error_type)
@@ -73,6 +99,7 @@ Every log event should include relevant context:
 **Use absolute imports with proper Python packaging. Never use `sys.path` manipulation.**
 
 ### Why
+
 - `sys.path.insert()` creates hidden coupling and breaks when scripts run from unexpected directories
 - Proper packaging ensures consistent imports regardless of working directory
 - Editable installs (`pip install -e .`) make development seamless
@@ -142,6 +169,7 @@ except Exception as e:
 - **Action required:** Files over 800 lines must be refactored
 
 When splitting large files:
+
 1. Group by responsibility (e.g., auth, sending, receiving)
 2. Create a package directory with `__init__.py` re-exporting public API
 3. Ensure existing imports continue to work
@@ -165,6 +193,7 @@ Use `TypedDict` for complex dictionary structures passed between functions.
 ## Code Duplication
 
 When you see the same pattern repeated 3+ times, extract it:
+
 - Similar class methods → base class or mixin
 - Similar async workflows → shared utility function
 - Similar LLM interactions → executor/strategy pattern
@@ -178,6 +207,7 @@ When modifying code, include appropriate tests:
 - **Refactoring**: Ensure existing tests still pass; add tests if coverage gaps exist
 
 Place tests in a `tests/` directory mirroring the source structure:
+
 ```
 tests/
 ├── explorer/
@@ -189,6 +219,7 @@ tests/
 ```
 
 Run tests before committing:
+
 ```bash
 pytest
 ```
@@ -198,6 +229,7 @@ If no test infrastructure exists yet, create it. Don't skip tests because "there
 ## Secrets
 
 Never hardcode API keys, tokens, or credentials in code. These belong in:
+
 - `.env` files (never committed)
 - Environment variables
 - Config files excluded from git

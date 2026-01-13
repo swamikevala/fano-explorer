@@ -65,6 +65,13 @@ class BrowserPool:
                 config, self.state, self.queues.get_queue("claude"), self.jobs
             )
 
+        # Watchdog task for stuck detection
+        self._watchdog_task: Optional[asyncio.Task] = None
+        watchdog_config = config.get("watchdog", {})
+        self._watchdog_enabled = watchdog_config.get("enabled", True)
+        self._watchdog_interval = watchdog_config.get("check_interval_seconds", 60)
+        self._backends_config = backends_config
+
     async def startup(self):
         """Start all workers and connect to backends."""
         log.info("pool.service.lifecycle", action="starting", backends=list(self.workers.keys()))
@@ -85,11 +92,26 @@ class BrowserPool:
             except Exception as e:
                 log.error("pool.backend.worker_start_failed", backend=name, error=str(e))
 
+        # Start watchdog for stuck detection
+        if self._watchdog_enabled:
+            self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+            log.info("pool.watchdog.started",
+                     check_interval=self._watchdog_interval)
+
         log.info("pool.service.lifecycle", action="started", backends=list(self.workers.keys()))
 
     async def shutdown(self):
         """Stop all workers and disconnect."""
         log.info("pool.service.lifecycle", action="stopping")
+
+        # Stop watchdog
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            log.info("pool.watchdog.stopped")
 
         for name, worker in self.workers.items():
             try:
@@ -99,6 +121,167 @@ class BrowserPool:
                 log.error("pool.backend.stop_failed", backend=name, error=str(e))
 
         log.info("pool.service.lifecycle", action="stopped")
+
+    async def _watchdog_loop(self):
+        """
+        Background task that monitors workers for stuck requests.
+
+        Periodically checks each worker's elapsed time and auto-kicks
+        workers that exceed their backend-specific timeout threshold.
+        """
+        while True:
+            try:
+                await asyncio.sleep(self._watchdog_interval)
+
+                for name, worker in self.workers.items():
+                    if worker._current_start_time is None:
+                        continue  # Worker is idle
+
+                    # Get per-backend timeout from config
+                    backend_config = self._backends_config.get(name, {})
+                    timeout = backend_config.get("response_timeout_seconds", 3600)
+
+                    elapsed = time.time() - worker._current_start_time
+                    if elapsed > timeout:
+                        log.warning("pool.watchdog.stuck_detected",
+                                    backend=name,
+                                    elapsed_seconds=round(elapsed),
+                                    timeout_threshold=timeout,
+                                    request_id=worker._current_request_id)
+
+                        # Auto-kick the stuck worker
+                        result = await self._kick_worker(name)
+                        log.info("pool.watchdog.auto_kicked",
+                                 backend=name,
+                                 result=result)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.exception(e, "pool.watchdog.error", {})
+                await asyncio.sleep(10)  # Back off on error
+
+    async def _kick_worker(self, backend: str) -> dict:
+        """
+        Internal method to kick a stuck worker.
+
+        Attempts to recover the response first before failing the job.
+        This preserves work if the LLM was genuinely still thinking.
+
+        Args:
+            backend: The backend name to kick
+
+        Returns:
+            Dict with kick result details
+        """
+        if backend not in self.workers:
+            return {"error": f"Unknown backend: {backend}"}
+
+        worker = self.workers[backend]
+        result = {"backend": backend, "actions": []}
+
+        try:
+            # Save job info before clearing anything
+            current_job = worker._current_job
+            chat_url = None
+            if current_job:
+                chat_url = current_job.chat_url
+            elif worker.browser and hasattr(worker.browser, 'page') and worker.browser.page:
+                chat_url = worker.browser.page.url
+
+            # Take screenshot for debugging
+            if worker.browser and hasattr(worker.browser, 'page') and worker.browser.page:
+                try:
+                    screenshot_path = Path(__file__).parent.parent / "debug" / f"kick_{backend}_{int(time.time())}.png"
+                    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                    await worker.browser.page.screenshot(path=str(screenshot_path))
+                    result["actions"].append(f"screenshot_saved:{screenshot_path}")
+                    log.info("pool.kick.screenshot", backend=backend, path=str(screenshot_path))
+                except Exception as e:
+                    result["actions"].append(f"screenshot_failed:{e}")
+
+            # Clear current work tracking (but don't fail job yet)
+            worker._current_job = None
+            worker._current_request_id = None
+            worker._current_prompt = None
+            worker._current_start_time = None
+            result["actions"].append("work_tracking_cleared")
+
+            # Clear state manager active work
+            self.state.clear_active_work(backend)
+            result["actions"].append("state_cleared")
+
+            # Try to reconnect browser
+            try:
+                reconnected = await worker.try_reconnect()
+                if reconnected:
+                    result["actions"].append("browser_reconnected")
+                    log.info("pool.kick.reconnected", backend=backend)
+                else:
+                    result["actions"].append("browser_reconnect_failed")
+                    log.warning("pool.kick.reconnect_failed", backend=backend)
+            except Exception as e:
+                result["actions"].append(f"reconnect_error:{e}")
+                reconnected = False
+
+            # Attempt quick recovery - check if response exists (don't wait for generation)
+            if current_job and chat_url and reconnected and worker.browser:
+                try:
+                    log.info("pool.kick.recovery_attempt", backend=backend,
+                             job_id=current_job.job_id, chat_url=chat_url)
+                    result["actions"].append(f"recovery_attempt:{current_job.job_id}")
+
+                    # Navigate back to the chat
+                    await worker.browser.page.goto(chat_url)
+                    await worker.browser.page.wait_for_load_state("networkidle")
+                    await asyncio.sleep(2)
+
+                    # Quick check - try to extract existing response (no waiting)
+                    response_text = None
+                    if hasattr(worker.browser, 'try_get_response'):
+                        response_text = await worker.browser.try_get_response()
+
+                    if response_text:
+                        # Found a response - complete the job
+                        worker.jobs.complete(
+                            job_id=current_job.job_id,
+                            result=response_text,
+                            deep_mode_used=current_job.deep_mode,
+                        )
+                        result["actions"].append(f"job_recovered:{current_job.job_id}")
+                        result["recovered"] = True
+                        log.info("pool.kick.recovery_success", backend=backend,
+                                 job_id=current_job.job_id, response_length=len(response_text))
+                    else:
+                        # No response - timeout exceeded, fail the job
+                        worker.jobs.fail(current_job.job_id, "Timeout exceeded - no response found")
+                        result["actions"].append(f"job_failed:{current_job.job_id}")
+                        result["recovered"] = False
+                        log.warning("pool.kick.timeout_no_response", backend=backend,
+                                    job_id=current_job.job_id)
+
+                except Exception as e:
+                    log.error("pool.kick.recovery_error", backend=backend, error=str(e))
+                    result["actions"].append(f"recovery_error:{e}")
+                    if current_job and worker.jobs:
+                        worker.jobs.fail(current_job.job_id, f"Timeout exceeded - recovery failed: {e}")
+                        result["actions"].append(f"job_failed:{current_job.job_id}")
+                    result["recovered"] = False
+
+            elif current_job and worker.jobs:
+                # No chat URL or couldn't reconnect - just fail the job
+                worker.jobs.fail(current_job.job_id, "Kicked by operator - browser stuck")
+                result["actions"].append(f"job_failed:{current_job.job_id}")
+                result["recovered"] = False
+
+            result["success"] = True
+
+        except Exception as e:
+            result["success"] = False
+            result["error"] = str(e)
+            log.exception(e, "pool.kick.error", {"backend": backend})
+
+        return result
 
     async def send(self, request: SendRequest) -> SendResponse:
         """Send a prompt to a backend and wait for response."""
@@ -545,6 +728,21 @@ def create_app(config: dict) -> FastAPI:
 
         return result
 
+    @app.post("/kick/{backend}")
+    async def kick_worker(backend: str):
+        """
+        Force-reset a stuck worker.
+
+        This will:
+        1. Take a screenshot for debugging
+        2. Fail any current job
+        3. Clear active work state
+        4. Attempt to reconnect the browser
+        """
+        result = await pool._kick_worker(backend)
+        log.info("pool.kick.complete", backend=backend, actions=result.get("actions", []))
+        return result
+
     @app.post("/shutdown")
     async def shutdown_endpoint():
         """
@@ -566,6 +764,54 @@ def create_app(config: dict) -> FastAPI:
 
         asyncio.create_task(delayed_shutdown())
         return {"status": "shutting_down", "message": "Pool will shutdown shortly"}
+
+    # ==================== RECOVERY ENDPOINTS ====================
+
+    @app.get("/recovered")
+    async def get_recovered_responses():
+        """
+        Get all completed jobs awaiting pickup.
+
+        Used by orchestrator on startup to recover responses from
+        jobs that completed while it was disconnected.
+
+        Returns:
+            {
+                "responses": [
+                    {
+                        "job_id": str,
+                        "request_id": str,
+                        "backend": str,
+                        "thread_id": str,
+                        "result": str,
+                        "deep_mode_used": bool,
+                        "completed_at": float
+                    },
+                    ...
+                ]
+            }
+        """
+        completed = pool.jobs.get_completed_jobs()
+        log.info("pool.recovery.list_requested", count=len(completed))
+        return {"responses": completed}
+
+    @app.delete("/recovered/{job_id}")
+    async def clear_recovered_response(job_id: str):
+        """
+        Remove a recovered response after it's been processed.
+
+        Called by orchestrator after successfully applying a recovered response.
+
+        Returns:
+            {"success": bool, "message": str}
+        """
+        removed = pool.jobs.remove_job(job_id)
+        if removed:
+            log.info("pool.recovery.cleared", job_id=job_id)
+            return {"success": True, "message": f"Removed job {job_id}"}
+        else:
+            log.warning("pool.recovery.not_found", job_id=job_id)
+            return {"success": False, "message": f"Job {job_id} not found"}
 
     return app
 

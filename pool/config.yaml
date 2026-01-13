@@ -25,12 +25,20 @@ backends:
 
   claude:
     enabled: true
-    api_key_env: "ANTHROPIC_API_KEY"
-    model: "claude-sonnet-4-20250514"
-    extended_thinking_model: "claude-sonnet-4-20250514"
+    browser_data_dir: "./browser_data/claude"
+    url: "https://claude.ai"
+    response_timeout_seconds: 3600
+    extended_thinking:
+      daily_limit: 100
+      reset_hour: 0
 
 queue:
   max_depth_per_backend: 10  # Reject if queue too deep
+
+watchdog:
+  enabled: true
+  check_interval_seconds: 60  # How often to check for stuck workers
+  # Uses per-backend response_timeout_seconds from backends config
 
 browser:
   headless: false  # Set true for production

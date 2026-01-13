@@ -34,12 +34,12 @@ log = get_logger("pool", "run_pool")
 
 
 class HealthCheckFilter(logging.Filter):
-    """Filter out health check and status endpoint logs."""
+    """Filter out health check, status, and activity endpoint logs."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
-        # Filter out health and status endpoint logs
-        if "/health" in message or "/status" in message:
+        # Filter out noisy polling endpoint logs
+        if "/health" in message or "/status" in message or "/activity" in message:
             return False
         return True
 

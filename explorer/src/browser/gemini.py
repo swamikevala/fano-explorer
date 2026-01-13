@@ -711,16 +711,38 @@ class GeminiInterface(BaseLLMInterface):
 
             if not file_input:
                 # Try clicking attachment/upload button to reveal file input
+                # Gemini's UI changes frequently - try multiple selectors
                 attachment_selectors = [
+                    # Current Gemini UI (2024-2025)
                     "button[aria-label*='Add image']",
+                    "button[aria-label*='Upload file']",
                     "button[aria-label*='Upload']",
                     "button[aria-label*='Attach']",
                     "button[aria-label*='Insert']",
+                    "button[aria-label*='Add file']",
+                    # Plus button / add button
+                    "button[aria-label='+']",
+                    "button[aria-label='Add']",
+                    "button.add-content-button",
+                    # Material icons
                     "button[mattooltip*='image']",
                     "button[mattooltip*='upload']",
+                    "button[mattooltip*='file']",
                     "[aria-label*='Add files']",
+                    # Icon-based selectors
+                    "button:has([data-icon='add_photo_alternate'])",
+                    "button:has([data-icon='attach_file'])",
+                    "button:has([data-icon='add'])",
                     "button:has(mat-icon:has-text('add_photo'))",
                     "button:has(mat-icon:has-text('attach'))",
+                    "button:has(mat-icon:has-text('add'))",
+                    # Near input area
+                    ".input-area button[aria-label*='file']",
+                    ".chat-input button",
+                    # Generic attachment icons
+                    "[data-tooltip*='Upload']",
+                    "[data-tooltip*='Image']",
+                    "[data-tooltip*='Attach']",
                 ]
 
                 for selector in attachment_selectors:
