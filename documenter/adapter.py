@@ -192,7 +192,7 @@ class DocumenterAdapter(ModuleInterface):
 
         # Get document context
         doc_summary = self.session.document.get_summary()
-        established = list(self.session.concept_tracker.get_established())
+        established = list(self.session.concept_tracker.get_established_concepts())
 
         if task_type == TaskType.ADDRESS_COMMENT.value:
             comment_text = task.payload.get("comment_text", "")
@@ -364,7 +364,7 @@ class DocumenterAdapter(ModuleInterface):
         if not requires:
             return True
 
-        established = self.session.concept_tracker.get_established()
+        established = self.session.concept_tracker.get_established_concepts()
         return all(req in established for req in requires)
 
     def _get_surrounding_context(self, line_num: int, context_lines: int = 10) -> str:
