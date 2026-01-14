@@ -363,7 +363,7 @@ class ExplorerAdapter(ModuleInterface):
             "threads_ready_for_synthesis": sum(
                 1 for t in threads if self.synthesis_engine.is_chunk_ready(t)
             ),
-            "blessed_insights_count": self.blessed_store.get_count() if self.blessed_store else 0,
+            "blessed_insights_count": len(self.blessed_store.get_blessed_insights()) if self.blessed_store else 0,
         }
 
     # ==================== Private Helper Methods ====================
@@ -421,7 +421,7 @@ class ExplorerAdapter(ModuleInterface):
     def _get_seed_priority(self, thread: ExplorationThread) -> int:
         """Get priority based on seed configuration."""
         if thread.primary_question_id:
-            seed = self.axioms.get_seed(thread.primary_question_id)
+            seed = self.axioms.get_seed_by_id(thread.primary_question_id)
             if seed and hasattr(seed, 'priority'):
                 return seed.priority
         return 0
