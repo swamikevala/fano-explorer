@@ -1,0 +1,252 @@
+---
+
+# Fano Documenter Module: "The Living Textbook" Design (v3.0)
+
+**Version:** 3.0
+**Role:** Autonomous Editor-in-Chief & Publisher
+**Dependencies:** Fano Orchestrator v4.0
+**Core Concept:** Graph-based Document Object Model (DOM) with specialized agents.
+
+---
+
+## 1. Executive Summary
+
+### 1.1 The Problem
+
+The current Documenter simply appends new insights to the end of a single `document.md` file. As the document grows, this leads to:
+
+1. **Context Amnesia:** The LLM cannot read the first 50 pages to decide where a new insight belongs, leading to duplicate definitions.
+2. **Structural Entropy:** Fundamental axioms appear in Chapter 10 because they were discovered late, rather than being inserted into Chapter 1.
+3. **Visual Poverty:** Complex geometric concepts (like Fano planes) are described in dense text without diagrams.
+4. **Quality Drift:** No consensus mechanism exists to catch mathematical errors or inconsistent notation before saving.
+
+### 1.2 The Solution: "Editorial Board" Architecture
+
+We restructure the module into a system of specialized agents coordinated by the Orchestrator:
+
+1. **The Architect:** A persistent agent (maintaining the "Editorial Voice") that manages the **Outline** and **Definition Registry**. It decides *where* content belongs.
+2. **The Mason (Drafter):** A worker that writes atomic section content, ensuring rigorous LaTeX and bridging text.
+3. **The Illustrator:** Generates Mermaid/TikZ diagrams for abstract concepts.
+4. **The Consensus Board:** A 3-LLM panel (Mathematician, Pedagogue, Skeptic) that reviews every change.
+
+---
+
+## 2. Data Architecture
+
+To solve context limits, we split the document physically but maintain it logically as a cohesive unit.
+
+### 2.1 File Structure
+
+```text
+data/document/
+├── structure.json          # The "Skeleton": TOC, Summaries, Hierarchy
+├── definitions.json        # The "Registry": Tracks where concepts are defined
+├── notation.json           # The "Style Guide": Enforces symbol consistency
+├── compiled_book.md        # Read-only concatenation (for humans)
+├── assets/                 # Generated diagrams (SVG/PNG)
+├── sections/               # The "Flesh": Atomic content files
+│   ├── 001_intro.md
+│   ├── 002_foundations.md
+│   └── ...
+└── comments/               # Human feedback state
+    └── pending.json
+
+```
+
+### 2.2 The Skeleton (`structure.json`)
+
+This file is small enough to fit in the Architect's context window (~2k tokens).
+
+```json
+{
+  "title": "The Fano Discoveries",
+  "chapters": [
+    {
+      "id": "ch_01",
+      "title": "Foundations",
+      "summary": "Establishes base axioms of the Fano plane and incidence geometry.",
+      "sections": [
+        {
+          "id": "sec_01_01",
+          "title": "Axioms of Incidence",
+          "file": "sections/001.md",
+          "summary": "Defines the 7 points and lines relationships...",
+          "concepts_defined": ["fano_plane", "incidence_geometry"],
+          "checksum": "sha256..."
+        }
+      ]
+    }
+  ]
+}
+
+```
+
+### 2.3 The Registry (`definitions.json`)
+
+Prevents duplication. Before explaining "Vector Spaces", the Architect checks this registry.
+
+```json
+{
+  "vector_space": { "section_id": "sec_02_01", "defined_at": "2026-01-14" },
+  "ring_theory": { "section_id": "sec_04_02", "defined_at": "2026-01-15" }
+}
+
+```
+
+---
+
+## 3. Workflows & Orchestration
+
+The Documenter polls the Orchestrator for tasks. It strictly respects the **Deep Mode Quota** (reserved for Refactoring/Architecting).
+
+### 3.1 Task: `incorporate_insight` (The Main Loop)
+
+**Trigger:** New `BlessedInsight` in inbox.
+**Priority:** Medium (60).
+
+**Phase 1: Planning (The Architect)**
+
+* **Backend:** **Gemini Deep Think** (Using Reserve Quota).
+* **Context:** `structure.json` + `definitions.json` + Insight.
+* **Logic:**
+1. **Registry Check:** Are prerequisite concepts already defined?
+2. **Placement:** "Does this insight update Section X, or require a new Section Y?"
+3. **Conflict:** If insight contradicts the Outline, flag for human review.
+
+
+* **Output:** `PlacementPlan` (target_section, mode=INSERT|MERGE|APPEND).
+
+**Phase 2: Drafting (The Mason)**
+
+* **Backend:** Claude 3.5 Sonnet (Strong at LaTeX/Coding).
+* **Context:** `target_section.md` + `notation.json` + Insight + Prev/Next Summaries.
+* **Prompt:** "Seamlessly integrate this insight. Write bridging text to connect with the previous paragraph. Use standard notation:  for fields."
+* **Visuals:** Detects structural concepts and emits `<<DIAGRAM_REQUEST: description>>` tags.
+
+**Phase 3: Review (The Consensus Board)**
+
+* **Agents:**
+* *The Mathematician:* Checks rigor and LaTeX validity.
+* *The Pedagogue:* Checks clarity and narrative flow.
+* *The Editor:* Checks formatting and style.
+
+
+* **Action:** If 2/3 agree, atomic write to `sections/*.md` and update `structure.json`.
+
+### 3.2 Task: `generate_diagram` (The Illustrator)
+
+**Trigger:** `<<DIAGRAM_REQUEST>>` tag found in draft.
+**Priority:** Low (40).
+
+**Process:**
+
+1. **Code Gen:** LLM writes **Mermaid JS** (flow/state) or **Python Matplotlib/NetworkX** (geometry).
+2. **Execution:** Code runs in Orchestrator's `run_in_executor` sandbox (safe execution).
+3. **Embed:** Replaces tag with `![Diagram](assets/uuid.svg)`.
+
+### 3.3 Task: `address_comment` (Human Feedback)
+
+**Trigger:** User comment in UI.
+**Priority:** **High (90 - Preempts Exploration).**
+
+**Process:**
+
+1. **Locate:** Architect maps comment to `section_id`.
+2. **Triage:**
+* *Correction:* Fix immediately.
+* *Elaboration:* Expand section.
+* *Refactor Request:* Trigger `global_refactor`.
+
+
+3. **Reply:** Update comment status to "Resolved".
+
+### 3.4 Task: `global_refactor` (The Gardener)
+
+**Trigger:** Document grows >20% since last refactor, or Manual Trigger.
+**Quota:** **MUST** use Gemini Deep Think / o1.
+
+**Process:**
+
+1. **Holistic Scan:** Architect reads full `structure.json` (Summaries only).
+2. **Optimization:**
+* "Section 4.1 repeats Section 2.3." -> **Merge**.
+* "Chapter 3 is too long and disjointed." -> **Split**.
+* "Flow is illogical." -> **Reorder**.
+
+
+3. **Execution:** Generates a batch of `rewrite_section` tasks.
+
+---
+
+## 4. Integration with Fano Orchestrator v4.0
+
+### 4.1 Thread Persistence (The "Editorial Voice")
+
+To prevent the "Architect" from forgetting the book's tone or plan, we use the Orchestrator's **Thread Persistence** (URL UUIDs).
+
+* **Mechanism:** The Orchestrator stores the `thread_id` for the Architect task.
+* **Benefit:** The LLM retains the "mental model" of the book across days of operation without needing to re-read the entire context every time.
+
+### 4.2 Module Implementation
+
+```python
+class DocumenterModule(ModuleInterface):
+    def __init__(self, config):
+        self.repo = DocumentRepository(config)
+        self.architect = OpportunityProcessor(self.repo)
+
+    def get_pending_tasks(self) -> list[Task]:
+        tasks = []
+        
+        # 1. High Priority: Comments
+        for c in self.repo.comments.get_unresolved():
+            tasks.append(Task(
+                key=f"doc:comment:{c.id}",
+                module="documenter",
+                task_type="address_comment",
+                priority=90,
+                payload={"comment_id": c.id}
+            ))
+            
+        # 2. Medium: Insights
+        # Only schedule if we have Deep Mode budget (checked by Allocator later)
+        for insight in self.repo.inbox.get_pending():
+            tasks.append(Task(
+                key=f"doc:insight:{insight.id}",
+                module="documenter",
+                task_type="incorporate_insight",
+                priority=60,
+                payload={"insight_id": insight.id},
+                # Use persistent thread for the Architect phase
+                conversation=ConversationState(thread_id=self.repo.architect_thread_id)
+            ))
+            
+        # 3. Low: Refactor (Maintenance)
+        if self.repo.needs_refactor():
+            tasks.append(Task(
+                key=f"doc:refactor:{date.today()}",
+                module="documenter",
+                task_type="global_refactor",
+                priority=40,
+                llm_preference="gemini_deep" # Strict requirement
+            ))
+            
+        return tasks
+
+```
+
+---
+
+## 5. Migration Strategy
+
+1. **Analysis:** Run `tools/migrate_doc.py` to parse the existing `document.md`.
+2. **Explosion:** Split the file into `sections/` based on H1/H2 headers (`#`, `##`).
+3. **Indexing:** Use an LLM to generate the initial `structure.json` (summaries) and `definitions.json`.
+4. **Configuration:** Update `orchestrator/config.yaml` to reserve 5 Gemini Deep slots/day for the Documenter.
+
+## 6. Success Criteria
+
+1. **Coherence:** A human reader can follow Chapter 1 through Chapter 3 without jarring transitions or lost context.
+2. **Duplication:** Core terms (e.g., "Field", "Vector Space") are defined exactly once in the registry.
+3. **Visuals:** At least 1 diagram generated per 5 major theorems.
+4. **Stability:** The `structure.json` remains valid and consistent after 7 days of autonomous operation.
