@@ -1,0 +1,268 @@
+Here’s a design review with a bias toward **loopholes / correctness traps first**, then **low-scope fixes** that keep your architecture intact.
+
+I’m treating the doc as a *design spec* (not an implementation), so the critiques below focus on places where the written design is internally inconsistent, underspecified in ways that can bite you in production, or has “looks-right” pseudocode that would misbehave as written. 
+
+---
+
+## Top risks that can break correctness or recovery
+
+### 1) WAL + checkpoint recovery logic is currently unsafe
+
+The spec says: checkpoint → replay WAL → resume. But the provided `WALManager.recover()` and `StateManager.recover()` as written can **reapply old entries and regress state**.
+
+Key problems:
+
+* **Commit tracking bug:** `recover()` adds an entry to `uncommitted` if its sequence isn’t in `committed_sequences` *at the time it’s read*. But commits are written **after** entries. That means an entry can be appended to `uncommitted`, then later its commit marker is read… and the entry **stays** in `uncommitted`. That causes replay of committed ops.
+
+* **Checkpoint sequence is stored but not used:** `checkpoint()` stores `"wal_sequence": self.wal.sequence`, but `recover()` does not filter WAL replay by that sequence. So you could replay pre-checkpoint entries and overwrite newer checkpoint state.
+
+* **Replay order can corrupt state:** Even if replays are idempotent in isolation, replaying an older “task_update” after a newer checkpoint can revert state (example: checkpoint has task COMPLETED, old entry sets it to PENDING).
+
+* **Type serialization mismatch:** WAL writes datetimes/enums via `default=str`; recovery reconstructs via `Task(**data)` / `WALEntry(**entry)` which will feed **strings** into fields typed as `datetime`/`Enum`. That’s either a runtime crash or silent bad state depending on Python/dataclass usage.
+
+Low-scope fixes (pick one path; don’t half-mix them):
+
+**Option A (simplest, low scope): treat WAL as an “append-only redo log” with no explicit commit markers**
+
+* Remove `commit()` entirely.
+* Guarantee each WAL entry is a **full, idempotent state upsert** (you’re already logging full task snapshots).
+* On checkpoint: write checkpoint + record `last_wal_sequence`.
+* On recovery: load checkpoint, then replay **only entries with `sequence > checkpoint.last_wal_sequence`**, in ascending sequence order.
+* On read: stop at first JSON decode error (likely partial last line) instead of “skip and continue”.
+
+This is surprisingly robust and avoids transactional subtlety.
+
+**Option B (keep commit markers): standard WAL semantics**
+
+* During recovery, only **redo committed entries after checkpoint**, and ignore uncommitted (or repair them explicitly).
+* Requires per-entry transaction identity or a single-entry transaction invariant and *correct* two-pass logic.
+* More code, more ways to be wrong.
+
+Given your “crash-only design” goal, Option A is the best “low scope / high safety” move.
+
+Also do this regardless:
+
+* On startup, set `self.sequence` to **max sequence observed** in existing WAL/checkpoint so sequences don’t reset and collide.
+
+---
+
+### 2) Scheduler / task lifecycle has multiple “will explode or reschedule forever” failure modes
+
+As written, the scheduling loop can repeatedly pick the same tasks, and modules can generate infinite duplicates.
+
+Specific issues:
+
+* `Scheduler.get_next_task()` does **not pop** from the heap, and only skips `COMPLETED`. It can return tasks that are `RUNNING` or `PAUSED`, so it may “schedule” the same task repeatedly.
+* `ExplorerModule.get_pending_tasks()` generates new task IDs *every call* (`uuid4().hex[:8]`). If orchestrator polls every tick (config says 100ms), you’ll create a flood of near-identical tasks for the same thread.
+* There’s no explicit dedupe rule: nothing prevents two tasks from targeting the same `thread_id` concurrently (e.g., `exploration` and `critique` racing).
+
+Low-scope fixes:
+
+* Introduce a stable **task key** (idempotency key): `key = f"{module}:{task_type}:{stable_context_hash}"`. Store it in Task.
+* In `StateManager`, maintain `active_task_keys` for states in `{PENDING, READY, RUNNING, PAUSED}`.
+* `Scheduler.submit()` becomes “submit-if-absent by key” instead of always pushing a new heap entry.
+* In `get_next_task()`, `heappop()` until you find a task that is truly runnable: state in `{PENDING, READY}`, not exceeded retries, allocator can allocate, etc.
+* Add a **module polling interval** (e.g., 2–10 seconds) separate from the scheduler tick, or make task discovery event-driven (even a simple “discover every N seconds” is enough).
+
+This alone will prevent runaway queue growth and duplicate work without changing the overall architecture.
+
+---
+
+### 3) The “actor model” claim and the “shared StateManager + locks” reality currently conflict
+
+The doc asserts “actor isolation” and “no shared mutable state”, but then:
+
+* Scheduler mutates `StateManager.tasks` directly.
+* Modules hold a shared dedup instance from `state.get_shared_dedup_checker()`.
+* Many components call each other directly rather than message passing (the message bus is defined, but the rest of the design largely uses direct calls).
+
+This mismatch matters because it will create *exactly* the kind of “who owns this state?” bugs the design is trying to eliminate.
+
+Low-scope fix:
+
+* Pick one of these and make the doc consistent:
+
+**Path 1 (simpler): “Single-threaded async + disciplined locking”**
+
+* Drop the “actor model” as the core guarantee.
+* Keep asyncio tasks, but declare: “StateManager is the sole owner of global state; all reads/writes go through async methods under its lock.”
+* Make dedup access go through a `DedupService` with its own lock.
+
+**Path 2 (more actor-ish, still low-ish): “State actor”**
+
+* Keep the message bus, but specifically: only the StateActor mutates tasks/module_states/allocator_state; others send messages.
+* You don’t have to actor-ize everything—just centralize mutation.
+
+Right now you’re in an unstable middle.
+
+---
+
+### 4) LLMGateway has a throughput-killing global lock
+
+In `LLMGateway.send()`:
+
+```python
+async with self._lock:  # Only one request per browser at a time
+```
+
+This lock is on the gateway, not per backend. That means **only one LLM request total** can be in-flight across ChatGPT + Gemini + Claude—even though the entire system goal is to maximize throughput across subscriptions.
+
+Low-scope fix:
+
+* Replace gateway `_lock` with **one lock per backend**: `self._locks: dict[str, asyncio.Lock]`.
+* Then `async with self._locks[backend]: ...`
+
+That preserves the “one request per browser session” constraint without serializing the whole system.
+
+---
+
+### 5) Deep-mode/quota availability isn’t consistently respected end-to-end
+
+Examples:
+
+* `Allocator.get_available()` ignores whether a task requires deep mode.
+* Scheduler checksI: `get_next_task(available_llms)` checks only backend name availability, then allocator later may refuse. This can cause scheduler churn/starvation patterns.
+* `record_usage()` happens **before** the request; failures still burn quota. That’s safe but may underutilize scarce deep-mode budgets.
+
+Low-scope fixes:
+
+* Move “runnable” logic to a single place: `allocator.allocate(task, gateway.get_available_backends())` should be the gate, not scheduler’s own checks.
+* Keep optimistic quota recording, but add a compensating path: if the request fails before sending (e.g., session missing), roll back the increment.
+
+---
+
+## Recovery / resilience gaps worth fixing now
+
+### 6) WAL compaction is “pass” but disk growth is guaranteed
+
+You have:
+
+* checkpoint every 60s
+* WAL compact threshold configured
+* `WALManager.compact()` not implemented
+
+In a days/weeks run, WAL will bloat until disk triggers HealthMonitor failure. That’s predictable.
+
+Low-scope fixes:
+
+* On each successful checkpoint, rotate WAL: close current file, start a new one.
+* Delete WAL files whose max sequence ≤ checkpoint sequence (if you adopt the “redo log after checkpoint” approach).
+* Add a hard cap guardrail: “if WAL dir > X GB, force checkpoint + compaction; if still big, pause LLM work.”
+
+---
+
+### 7) Restart sequence: module restore should happen before resubmitting tasks
+
+In `RecoveryManager.recover()`:
+
+* it resumes paused tasks (`scheduler.submit(task)`)
+* then initializes/restores module state (`module.restore_state(...)`)
+
+If tasks run quickly, they may execute against modules that haven’t restored domain state yet.
+
+Low-scope fix:
+
+* Swap the order: restore modules first, then submit/resume tasks.
+
+---
+
+### 8) “RUNNING→PAUSED on recovery” isn’t persisted
+
+`StateManager.recover()` marks RUNNING tasks as PAUSED but only logs info. If the system crashes again before a checkpoint, you can re-enter RUNNING.
+
+Low-scope fix:
+
+* For each state correction during recovery, call `update_task()` (or batch-update with a single checkpoint) so the repaired state is durable.
+
+---
+
+## Execution semantics & correctness
+
+### 9) TaskExecutor doesn’t call module.handle_failure
+
+`TaskExecutor.execute()` catches exceptions and marks FAILED, but never calls the module’s `handle_failure()` hook (which the interface requires). That means domain cleanup and retry logic will be scattered/duplicated.
+
+Low-scope fix:
+
+* In the failure path, call `await module.handle_failure(task, str(e))` before returning.
+
+---
+
+### 10) Scheduler API inconsistencies / missing methods
+
+`TaskExecutor._should_preempt()` calls `scheduler.peek_next()` but Scheduler doesn’t define it.
+
+Also `Scheduler._recompute_all_priorities()` is called but not defined.
+
+Low-scope fix:
+
+* Either remove preemption based on peek (use a “time-slice” policy), or implement those methods.
+* If you keep dynamic priorities, recompute lazily: compute current priority when popping; don’t rebuild the entire heap each time.
+
+---
+
+### 11) The “READY” state is defined but unused
+
+Tasks are created PENDING, executor sets RUNNING, recovery uses PAUSED. READY never appears and there’s no dependency model to transition PENDING→READY.
+
+Low-scope fix:
+
+* Either remove READY from TaskState (simplify), or explicitly define what makes a task READY (e.g., dependencies available, LLM allocated, file locks acquired).
+
+---
+
+### 12) Conversation truncation can break reasoning continuity
+
+Keeping last 50 messages is a practical cap, but it can silently delete critical definitions, assumptions, or symbols from earlier turns (very plausible in math work).
+
+Low-scope fix:
+
+* When truncating, generate/store a short **conversation summary blob** (even a naive “running notes” written by your own code or a cheap LLM call) and keep it as a pinned system/context message.
+
+This is small effort with large quality payoff.
+
+---
+
+## Cross-cutting loophole: “Only TaskExecutor talks to LLM” must be enforced
+
+The spec wants all LLM usage to be scheduled/allocated centrally. But existing components (dedup checker, legacy explorer/documenter code) may still call browsers/LLMs directly.
+
+Low-scope enforcement mechanisms:
+
+* Make `LLMGateway` the only place that has access to browser sessions; do not expose sessions elsewhere.
+* Grep-level guardrail: a CI test that fails if modules import `pool`/browser drivers directly.
+* Runtime guardrail: wrap or monkeypatch legacy LLM entrypoints to raise unless called from TaskExecutor context.
+
+This is one of those “boring constraints” that prevents the whole system from quietly reverting into a spaghetti scheduler.
+
+---
+
+## Smaller, still-worth-fixing details
+
+* Use `os.replace()` instead of `Path.rename()` for atomic overwrite semantics in `AtomicFileWriter` and checkpoints. Same idea, fewer edge cases.
+* `WALManager.commit()` should call `_ensure_file()` defensively (it assumes a file handle exists).
+* Health monitor “stuck task” threshold should exclude “currently in LLM request” if you can detect that, otherwise long deep-mode calls may be misclassified.
+* `LLMQuota.record_rate_limit()` reducing hourly limit based on `hourly_used * 0.8` is… odd. It can collapse the limit to something tiny early in an hour. Low-scope improvement: store a separate `effective_hourly_limit` estimate, don’t overwrite the configured limit.
+
+---
+
+## What I’d change first (minimal scope, maximal stabilization)
+
+1. **Fix WAL/checkpoint semantics** (filter by checkpoint sequence; fix commit handling or remove commit markers; implement stable serialization).
+2. **Add task dedupe via stable task keys** (prevents infinite duplicate task creation).
+3. **Make gateway locks per-backend** (unblocks true multi-LLM throughput).
+4. **Make “allocator.allocate() is the gate”** (scheduler shouldn’t guess runnable-ness).
+5. **Implement WAL rotation/compaction** (prevents inevitable disk death).
+
+These five changes don’t alter the architecture’s intent; they make it survivable.
+
+---
+
+## Information that would sharpen the review (only if you already know it)
+
+* Expected upper bounds: number of active threads/tasks at once; how often `get_pending_tasks()` is called in practice.
+* Whether you’re willing to rely on a supervisor restart (systemd/Docker) as part of “crash-only design”.
+* Whether dedup currently triggers any LLM calls directly (and through what path).
+
+Everything above can be applied even without those answers, but those details determine how urgently you need backpressure and strict LLM-call enforcement.
+
