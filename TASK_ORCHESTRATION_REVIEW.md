@@ -1,7 +1,8 @@
 # Task Orchestration System - Comprehensive Review
 
-**Date:** 2026-01-13
+**Date:** 2026-01-14
 **Scope:** Complete analysis of task orchestration, LLM utilization, robustness, and code quality
+**Updated:** Analysis of new top-level orchestration module design (`docs/requirements/module-orchestration.md`)
 
 ---
 
@@ -13,30 +14,36 @@ This review identified **47 issues** across the Fano task orchestration system, 
 - **14 MEDIUM** issues impacting efficiency and maintainability
 - **10 LOW** priority improvements
 
-The system has solid foundational architecture but needs improvements in:
-1. Priority scheduling (JobStore ignores priorities)
-2. Concurrency safety (multiple race conditions)
-3. Atomicity of file operations (no crash-safe writes)
-4. Recovery mechanisms (gaps in restart handling)
+### New Orchestration Module Impact
+
+The proposed top-level orchestration module (`docs/requirements/module-orchestration.md`) **addresses 12 of the 47 issues** identified, including:
+- ✅ Priority scheduling (new Scheduler with dynamic priority computation)
+- ✅ Atomic file writes (StateManager uses temp file + rename)
+- ✅ Unified quota tracking (centralized LLMQuotas)
+- ✅ Work stealing (preemptible tasks with yield points)
+- ✅ Crash recovery (checkpointing with proper state restoration)
+
+However, the new design introduces **8 new potential issues** and **23 existing issues remain unaddressed** that must be fixed before or during migration.
 
 ---
 
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
-2. [LLM Instance Utilization](#2-llm-instance-utilization)
-3. [Task Priority Issues](#3-task-priority-issues)
-4. [Insight Flow Problems](#4-insight-flow-problems)
-5. [Robustness & Recovery](#5-robustness--recovery)
-6. [Race Conditions](#6-race-conditions)
-7. [Error Handling](#7-error-handling)
-8. [Recommendations](#8-recommendations)
+2. [New Orchestration Module Analysis](#2-new-orchestration-module-analysis)
+3. [LLM Instance Utilization](#3-llm-instance-utilization)
+4. [Task Priority Issues](#4-task-priority-issues)
+5. [Insight Flow Problems](#5-insight-flow-problems)
+6. [Robustness & Recovery](#6-robustness--recovery)
+7. [Race Conditions](#7-race-conditions)
+8. [Error Handling](#8-error-handling)
+9. [Recommendations](#9-recommendations)
 
 ---
 
 ## 1. Architecture Overview
 
-### System Components
+### Current System Components
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -83,7 +90,246 @@ The system has solid foundational architecture but needs improvements in:
 
 ---
 
-## 2. LLM Instance Utilization
+## 2. New Orchestration Module Analysis
+
+### 2.1 Proposed Architecture
+
+The new design (`docs/requirements/module-orchestration.md`) introduces a centralized orchestrator:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         ORCHESTRATOR                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │   Scheduler │  │   State     │  │   LLM Allocator         │  │
+│  │   (decides  │  │   Manager   │  │   (routes requests,     │  │
+│  │    what)    │  │   (tracks)  │  │    manages quotas)      │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└────────┬────────────────┬─────────────────────┬─────────────────┘
+         │                │                     │
+         ▼                ▼                     ▼
+    ┌─────────┐     ┌───────────┐        ┌───────────┐
+    │Explorer │     │Documenter │        │Researcher │
+    │ Module  │     │  Module   │        │  Module   │
+    └─────────┘     └───────────┘        └───────────┘
+         │                │                     │
+         └────────────────┼─────────────────────┘
+                          ▼
+              ┌───────────────────────┐
+              │      LLM Pool         │
+              │  (ChatGPT/Gemini/     │
+              │   Claude)             │
+              └───────────────────────┘
+```
+
+### 2.2 Issues ADDRESSED by New Design
+
+| Issue ID | Original Issue | How New Design Addresses It |
+|----------|---------------|----------------------------|
+| **CRITICAL** | JobStore ignores priority | Scheduler.compute_priority() with dynamic factors (Part 3.1) |
+| **CRITICAL** | Worker scheduling priority inversion | Unified task queue via Scheduler (Part 3.3) |
+| **HIGH** | Non-atomic blessed_insights.json writes | StateManager uses temp file + os.rename() (Part 5.2) |
+| **HIGH** | Dual deep mode tracking out of sync | Centralized LLMQuotas with single source of truth (Part 4.2) |
+| **HIGH** | No work stealing between models | Preemptible tasks with yield points (Part 2.4) |
+| **HIGH** | Pool restart mid-request recovery | Task state persistence with PAUSED state recovery (Part 5.3) |
+| **MEDIUM** | Thread selection reloads all threads | Module state caching in OrchestratorState (Part 5.1) |
+| **MEDIUM** | Document write not atomic | StateManager pattern can be applied to all writes |
+| **LOW** | Deep mode quota underutilized | LLM consultation recommends allocation shifts (Part 3.4) |
+| **LOW** | Missing timeout config | Configurable in orchestrator config (Part 8) |
+| **MEDIUM** | No cross-module coordination | Explicit module interface with priority balancing |
+| **HIGH** | Orphaned futures after restart | Task-based model doesn't rely on futures |
+
+**Summary:** 12 of 47 issues addressed (26%)
+
+### 2.3 Issues REMAINING (Must Fix Before/During Migration)
+
+These issues exist in current code and are NOT addressed by the new orchestration design:
+
+| Issue ID | Issue | Location | Severity |
+|----------|-------|----------|----------|
+| 1 | Directory lookup bug in insight processor | `explorer/src/orchestration/insight_processor.py:390` | **CRITICAL** |
+| 2 | Documenter doesn't load blessed insights into dedup | `documenter/session.py:217-237` | **CRITICAL** |
+| 3 | Global rate_tracker without synchronization | `explorer/src/browser/base.py:94-151` | **CRITICAL** |
+| 4 | Unprotected worker state reads | `pool/src/workers.py:45-48` | **CRITICAL** |
+| 5 | Bare except clause | `control/debug_util.py:47` | **CRITICAL** |
+| 6 | Fire-and-forget save in quota handler | `explorer/src/orchestration/insight_processor.py:372` | **HIGH** |
+| 7 | File TOCTOU in queue recovery | `pool/src/queue.py:236-268` | **HIGH** |
+| 8 | JobStore content cache race | `pool/src/jobs.py:121-127` | **HIGH** |
+| 9 | Swallowed exceptions in worker loop | `pool/src/workers.py:451-454` | **HIGH** |
+| 10 | Silent failures in blessed store load | `explorer/src/orchestration/blessed_store.py:88-96` | **MEDIUM** |
+| 11 | In-memory review progress tracking | `explorer/src/orchestration/insight_processor.py:263-323` | **MEDIUM** |
+| 12 | Missing incorporation flag persistence | `documenter/opportunities.py:186-208` | **MEDIUM** |
+
+**Note:** The new orchestration module doesn't touch pool internals or existing module code. These bugs will persist unless explicitly fixed.
+
+### 2.4 NEW Potential Issues in Proposed Design
+
+The new design introduces some concerns that should be addressed:
+
+#### NEW-1: ConversationState Size Unbounded [MEDIUM]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 2.5
+
+```python
+@dataclass
+class ConversationState:
+    messages: list[dict]        # Message history - NO SIZE LIMIT
+```
+
+**Problem:** Multi-turn exploration conversations can grow to hundreds of messages. Serializing full history on every checkpoint creates:
+- Large state files (potential 10MB+ per conversation)
+- Slow checkpoint writes
+- Memory pressure
+
+**Recommendation:** Add configurable message limit (e.g., last 50 messages) or rolling summary.
+
+---
+
+#### NEW-2: Preemption Only After LLM Requests [MEDIUM]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 2.4
+
+```python
+if action.type == "llm_request":
+    if self.scheduler.should_preempt(task):
+        task.state = TaskState.PAUSED
+        # ...
+elif action.type == "file_operation":
+    await action.execute()  # No preemption check!
+```
+
+**Problem:** File operations (extraction, dedup checks, blessed store writes) can take significant time and cannot be preempted. A long file operation blocks higher-priority work.
+
+**Recommendation:** Add preemption points before expensive file operations or make them cancellable.
+
+---
+
+#### NEW-3: LLM Consultation Overhead [LOW]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 3.4
+
+```python
+async def consult_llm_for_priorities(self):
+    """Use ~5% of LLM budget for meta-decisions."""
+```
+
+**Problem:** Hourly LLM consultations for priority guidance could be wasteful, especially when:
+- System is in steady state with balanced workload
+- Rate limits are already hit
+- Simple heuristics would suffice
+
+**Recommendation:** Make consultation conditional - only when significant imbalance detected OR explicitly requested.
+
+---
+
+#### NEW-4: Task Queue Unbounded [MEDIUM]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 5.1
+
+```python
+@dataclass
+class OrchestratorState:
+    tasks: dict[str, Task]       # No size limit
+    task_queue: list[str]        # No size limit
+```
+
+**Problem:** If modules generate tasks faster than they're consumed (e.g., many seeds, backlog of insights), the task queue can grow unboundedly.
+
+**Recommendation:** Add queue size limits per module with backpressure.
+
+---
+
+#### NEW-5: Recovery Gap for RUNNING Tasks [HIGH]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 5.3
+
+```python
+if saved_state:
+    for task in self.tasks.values():
+        if task.state == TaskState.RUNNING:
+            # Was running when crashed - mark as paused
+            task.state = TaskState.PAUSED
+```
+
+**Problem:** A task marked RUNNING at crash time may not have saved its conversation state (checkpoints are periodic, not per-action). When resumed as PAUSED, the conversation state may be stale or missing.
+
+**Recommendation:** Save conversation state immediately before each LLM request, not just at checkpoints.
+
+---
+
+#### NEW-6: Checkpoint Failure Not Handled [MEDIUM]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 5.2
+
+```python
+def save(self):
+    temp_path = f"{self.state_path}.tmp"
+    with open(temp_path, 'w') as f:
+        json.dump(asdict(state), f, indent=2, default=str)
+    os.rename(temp_path, self.state_path)  # What if this fails?
+```
+
+**Problem:** No error handling for checkpoint failures. If disk is full, permissions denied, or rename fails, the orchestrator continues without persisted state.
+
+**Recommendation:** Add retry logic, alerting, and consider graceful degradation.
+
+---
+
+#### NEW-7: Module Task Generation Race [MEDIUM]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 6.1
+
+```python
+class ModuleInterface(ABC):
+    @abstractmethod
+    def get_pending_tasks(self) -> list[Task]:
+        """Return tasks this module wants to run."""
+        pass
+```
+
+**Problem:** Scheduler calls `get_pending_tasks()` on each module, but module state may change between task generation and task execution. A task may become invalid (e.g., insight already processed by another path).
+
+**Recommendation:** Add task validation before execution, with graceful handling of stale tasks.
+
+---
+
+#### NEW-8: Pool Service Role Unclear [HIGH]
+
+**Location:** `docs/requirements/module-orchestration.md` Part 12, Question 1
+
+> "Browser pool simplification: With single-instance LLMs, do we still need the full pool service, or can we simplify?"
+
+**Concern:** The design shows LLM Allocator routing to Pool, but it's unclear:
+- Does Pool retain its current queue/job semantics?
+- Does Orchestrator bypass Pool for task execution?
+- How do the two priority systems (Orchestrator Scheduler vs Pool RequestQueue) interact?
+
+**Recommendation:** Clarify Pool's role in the new architecture:
+- Option A: Pool becomes thin browser wrapper, Orchestrator handles all scheduling
+- Option B: Pool retains scheduling for browser-specific concerns, Orchestrator handles cross-module coordination
+
+---
+
+### 2.5 Design Strengths
+
+The new orchestration design has several excellent features:
+
+1. **Dynamic Priority Computation** (Part 3.1) - Considers backlog pressure, starvation prevention, seed priority, comment responsiveness, and quota availability
+
+2. **Preemptible Tasks** (Part 2.4) - Enables fine-grained control over LLM allocation
+
+3. **Atomic Checkpointing** (Part 5.2) - Proper crash-safe state persistence
+
+4. **Module Interface** (Part 6.1) - Clean abstraction for module integration
+
+5. **Configurable Everything** (Part 8) - Sensible defaults with full override capability
+
+6. **LLM Consultation** (Part 3.4) - Innovative approach to adaptive scheduling
+
+7. **Metrics & Observability** (Part 7) - Comprehensive structured logging
+
+---
+
+## 3. LLM Instance Utilization
 
 ### Current Model Management
 
@@ -96,7 +342,7 @@ The system manages 2-3 LLM instances:
 
 ### Issues with LLM Utilization
 
-#### ISSUE-LLM-1: No Work Stealing Between Models [HIGH]
+#### ISSUE-LLM-1: No Work Stealing Between Models [HIGH] ✅ ADDRESSED
 
 **Location:** `explorer/src/orchestrator.py:373`
 
@@ -108,11 +354,11 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 
 **Impact:** With 30-second poll intervals, fast models waste ~80% of their capacity waiting.
 
-**Recommendation:** Implement work-stealing pattern where idle models can pick up new work without waiting for cycle completion.
+**New Design Solution:** Preemptible tasks with yield points allow idle LLMs to pick up new work immediately.
 
 ---
 
-#### ISSUE-LLM-2: Thread Selection Reloads All Threads Each Cycle [MEDIUM]
+#### ISSUE-LLM-2: Thread Selection Reloads All Threads Each Cycle [MEDIUM] ✅ ADDRESSED
 
 **Location:** `explorer/src/orchestration/thread_manager.py:67-125`
 
@@ -120,21 +366,21 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 
 **Impact:** ~100 JSON file reads per cycle as thread count grows.
 
-**Recommendation:** Cache thread metadata in memory with invalidation on file changes.
+**New Design Solution:** Module state cached in OrchestratorState, updated only on changes.
 
 ---
 
-#### ISSUE-LLM-3: Deep Mode Quota Underutilized [LOW]
+#### ISSUE-LLM-3: Deep Mode Quota Underutilized [LOW] ✅ ADDRESSED
 
 **Configuration:** ChatGPT Pro limited to 100/day, Gemini Deep Think to 20/day
 
 **Problem:** With ~3-5 synthesis events per day, only using ~30% of allocated quota.
 
-**Recommendation:** Use deep mode more aggressively for complex exploration rounds (when profundity signals detected).
+**New Design Solution:** LLM consultation can recommend more aggressive deep mode usage when appropriate.
 
 ---
 
-#### ISSUE-LLM-4: Dual Deep Mode Tracking Systems Out of Sync [HIGH]
+#### ISSUE-LLM-4: Dual Deep Mode Tracking Systems Out of Sync [HIGH] ✅ ADDRESSED
 
 **Locations:**
 - `explorer/src/browser/model_selector.py` - maintains `deep_mode_state.json`
@@ -142,15 +388,13 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 
 **Problem:** Two independent counters that can diverge if pool restarts or explorer records usage before pool fails.
 
-**Impact:** May exceed intended deep mode limits or leave quota unused.
-
-**Recommendation:** Single source of truth in pool state, with explorer querying pool for quota availability.
+**New Design Solution:** Centralized LLMQuotas in Orchestrator is the single source of truth.
 
 ---
 
-## 3. Task Priority Issues
+## 4. Task Priority Issues
 
-### CRITICAL: JobStore Ignores Priority [CRITICAL]
+### CRITICAL: JobStore Ignores Priority [CRITICAL] ✅ ADDRESSED
 
 **Location:** `pool/src/jobs.py:211-234`
 
@@ -168,13 +412,13 @@ def get_next_job(self, backend: str) -> Optional[Job]:
 
 **Problem:** The `Job` dataclass accepts a `priority` field (line 48) but `get_next_job()` iterates through jobs in FIFO order, completely ignoring priority.
 
-**Impact:** HIGH priority jobs wait behind LOW priority jobs. System cannot prioritize urgent work.
+**New Design Solution:** Scheduler.compute_priority() considers multiple factors; unified task queue replaces per-backend queues.
 
-**Recommendation:** Replace list with heap-based priority queue (like RequestQueue uses).
+**Migration Note:** If Pool is retained, JobStore still needs fixing for backward compatibility during migration.
 
 ---
 
-### CRITICAL: Worker Scheduling Priority Inversion [CRITICAL]
+### CRITICAL: Worker Scheduling Priority Inversion [CRITICAL] ✅ ADDRESSED
 
 **Location:** `pool/src/workers.py:71-91`
 
@@ -194,26 +438,25 @@ async def _run_loop(self):
 
 **Problem:** Workers check JobStore (FIFO) BEFORE RequestQueue (priority-aware). A LOW priority async job will be processed before a HIGH priority sync request.
 
-**Impact:** Priority requests from sync API are starved by any async jobs.
-
-**Recommendation:** Check priority across BOTH queues and process highest priority regardless of queue type.
+**New Design Solution:** Single Scheduler determines execution order; no dual-queue confusion.
 
 ---
 
-### Priority System Summary
+### Priority System Summary (Updated)
 
-| Component | Priority Support | Status |
-|-----------|-----------------|--------|
-| RequestQueue (sync) | HIGH/NORMAL/LOW via heap | ✅ Working |
-| JobStore (async) | Field exists, IGNORED | ❌ Broken |
-| Worker scheduling | Async before sync | ❌ Inverted |
-| Documenter opportunities | Calculated priority score | ✅ Working |
+| Component | Current Priority Support | New Design |
+|-----------|-------------------------|------------|
+| RequestQueue (sync) | HIGH/NORMAL/LOW via heap | Replaced by Scheduler |
+| JobStore (async) | Field exists, IGNORED | Replaced by Scheduler |
+| Worker scheduling | Async before sync | N/A - Scheduler controls |
+| Documenter opportunities | Calculated priority score | Integrated into Scheduler |
+| **Orchestrator Scheduler** | N/A | ✅ Dynamic multi-factor priority |
 
 ---
 
-## 4. Insight Flow Problems
+## 5. Insight Flow Problems
 
-### CRITICAL: Directory Lookup Bug in Insight Processor [CRITICAL]
+### CRITICAL: Directory Lookup Bug in Insight Processor [CRITICAL] ⚠️ NOT ADDRESSED
 
 **Location:** `explorer/src/orchestration/insight_processor.py:390`
 
@@ -227,9 +470,11 @@ for subdir in subdirs:
 
 **Impact:** After crash during review, restart cannot find existing insights and re-extracts them, creating duplicates.
 
+**Status:** Must be fixed in current code. New orchestration module doesn't change InsightProcessor internals.
+
 ---
 
-### CRITICAL: Documenter Doesn't Load Blessed Insights into Dedup [CRITICAL]
+### CRITICAL: Documenter Doesn't Load Blessed Insights into Dedup [CRITICAL] ⚠️ NOT ADDRESSED
 
 **Location:** `documenter/session.py:217-237`
 
@@ -245,9 +490,11 @@ async def _initialize_dedup(self):
 
 **Impact:** Two similar blessed insights can both be incorporated, creating duplicates in the document.
 
+**Status:** Must be fixed in Documenter module code. New orchestration won't change this behavior.
+
 ---
 
-### HIGH: Fire-and-Forget Save in Quota Handler [HIGH]
+### HIGH: Fire-and-Forget Save in Quota Handler [HIGH] ⚠️ NOT ADDRESSED
 
 **Location:** `explorer/src/orchestration/insight_processor.py:372`
 
@@ -260,28 +507,17 @@ def _handle_quota_exhausted(self, insight: AtomicInsight, error):
 
 **Problem:** If process exits immediately, save may not complete.
 
-**Impact:** Insight status changed to PENDING but not persisted, causing re-review on restart.
+**Status:** Must be fixed in current code.
 
 ---
 
-### HIGH: Non-Atomic blessed_insights.json Writes [HIGH]
+### HIGH: Non-Atomic blessed_insights.json Writes [HIGH] ✅ ADDRESSED
 
 **Location:** `explorer/src/orchestration/blessed_store.py:117-137`
 
-```python
-if self.paths.blessed_insights_file.exists():
-    with open(self.paths.blessed_insights_file, encoding="utf-8") as f:
-        data = json.load(f)
-else:
-    data = {"insights": []}
-data["insights"].append({...})
-with open(self.paths.blessed_insights_file, "w", encoding="utf-8") as f:
-    json.dump(data, f, ...)
-```
-
 **Problem:** Read-modify-write without atomicity. Crash during write corrupts file.
 
-**Impact:** Lost blessed insights if crash occurs during JSON write.
+**New Design Solution:** StateManager pattern (temp file + rename) can be applied to all JSON writes.
 
 ---
 
@@ -294,91 +530,77 @@ Thread Exploration
   Chunk Ready? ──────────────────────────────┐
        │                                      │
        ▼                                      │
-Extract Insights ◄──── BUG: Wrong directory  │
-       │                lookup after crash   │
+Extract Insights ◄──── ⚠️ BUG: Wrong directory│
+       │                   (NOT ADDRESSED)    │
        ▼                                      │
- Dedup Check ◄───────── BUG: Explorer and    │
-       │                Documenter have       │
-       ▼                separate dedup       │
-Review Panel                                  │
+ Dedup Check ◄───────── ⚠️ BUG: Explorer and  │
+       │                   Documenter have    │
+       ▼                   separate dedup     │
+Review Panel               (NOT ADDRESSED)    │
        │                                      │
        ▼                                      │
-Bless Insight ◄──────── BUG: Non-atomic      │
-       │                JSON write           │
+Bless Insight ◄──────── ✅ Will use atomic    │
+       │                   writes             │
        ▼                                      │
-Documenter ◄─────────── BUG: Doesn't load    │
-       │                blessed into dedup   │
-       ▼                                      │
+Documenter ◄─────────── ⚠️ BUG: Doesn't load  │
+       │                   blessed into dedup │
+       ▼                   (NOT ADDRESSED)    │
  Add to Document                              │
 ```
 
 ---
 
-## 5. Robustness & Recovery
+## 6. Robustness & Recovery
 
-### State Persistence Analysis
+### State Persistence Analysis (Updated)
 
-| State | Persisted | Recovery | Risk |
-|-------|-----------|----------|------|
-| Pool queue requests | ✅ Yes | ✅ On startup | LOW |
-| Async jobs | ✅ Yes | ✅ On startup | LOW |
-| Active work | ✅ Yes | ⚠️ Via watchdog only | MEDIUM |
-| Explorer threads | ✅ Yes | ✅ On startup | LOW |
-| In-progress extraction | ❌ No | ❌ None | HIGH |
-| Review progress | ❌ No | ❌ None | MEDIUM |
-| Document sections | ✅ Yes | ✅ On startup | LOW |
-| Futures/callbacks | ❌ No | ❌ Cannot serialize | HIGH |
+| State | Current | New Design | Notes |
+|-------|---------|------------|-------|
+| Pool queue requests | ✅ Persisted | ⚠️ TBD | Pool role unclear |
+| Async jobs | ✅ Persisted | ⚠️ TBD | Pool role unclear |
+| Active work | ⚠️ Watchdog only | ✅ Task state | Immediate recovery |
+| Explorer threads | ✅ On startup | ✅ Module state | Cached |
+| In-progress extraction | ❌ None | ✅ Task PAUSED | Resumable |
+| Review progress | ❌ None | ✅ Task state | Persisted |
+| Document sections | ✅ On startup | ✅ Module state | Unchanged |
+| Conversation state | ❌ None | ⚠️ Periodic | See NEW-5 |
 
 ---
 
-### HIGH: Pool Restart Mid-Request [HIGH]
-
-**Scenario:** Pool crashes while browser is generating response.
+### HIGH: Pool Restart Mid-Request [HIGH] ✅ ADDRESSED
 
 **Current Behavior:**
 1. Active work tracked in `pool_state.json`
 2. On restart: Queue restored, but NO automatic recovery of active work
 3. Watchdog kicks in after 1 HOUR timeout
-4. Stale work auto-cleared after 2 hours
 
-**Gap:** No immediate recovery on startup. Work sits in limbo for up to 2 hours.
-
-**Location:** `pool/src/api.py:75-101` (startup) and `pool/src/state.py:220-234` (staleness check)
+**New Design Solution:** Tasks have explicit PAUSED state that's restored on startup. No 2-hour limbo.
 
 ---
 
-### HIGH: Orphaned Futures After Pool Restart [HIGH]
+### HIGH: Orphaned Futures After Pool Restart [HIGH] ✅ ADDRESSED
 
 **Location:** `pool/src/queue.py:157-190`
 
-**Problem:** When queue is restored, new Futures are created but original requestor's Future is lost (cannot be serialized).
+**Problem:** Original requestor's Future is lost (cannot be serialized).
 
-**Impact:** Client waiting on response hangs indefinitely or times out. No way to notify original requestor.
-
-**Recommendation:** Add request metadata for clients to query status and retry.
+**New Design Solution:** Task-based model doesn't rely on futures. Tasks resume from persisted state.
 
 ---
 
-### MEDIUM: Document Write Not Atomic [MEDIUM]
+### MEDIUM: Document Write Not Atomic [MEDIUM] ⚠️ PARTIALLY ADDRESSED
 
 **Location:** `documenter/document.py:107-135`
 
-```python
-def save(self):
-    self.path.write_text(self._render(), encoding="utf-8")  # NOT ATOMIC
-    if description:
-        # Version saved separately - could create inconsistency
-```
-
 **Problem:** Direct `write_text()` - if crash mid-write, file is truncated/corrupted.
 
-**Recommendation:** Write to temp file, then atomic rename.
+**Status:** StateManager pattern addresses orchestrator state, but document writes still need explicit fix.
 
 ---
 
-## 6. Race Conditions
+## 7. Race Conditions
 
-### CRITICAL: Unprotected Worker State Reads [CRITICAL]
+### CRITICAL: Unprotected Worker State Reads [CRITICAL] ⚠️ NOT ADDRESSED
 
 **Location:** `pool/src/workers.py:45-48, 101-103` and `pool/src/api.py:137-144`
 
@@ -393,13 +615,13 @@ if worker._current_start_time is None:
 elapsed = time.time() - worker._current_start_time  # TOCTOU
 ```
 
-**Problem:** Worker state accessed without synchronization. Watchdog may read stale/None values.
+**Problem:** Worker state accessed without synchronization.
 
-**Impact:** Incorrect stuck detection, potential NoneType errors.
+**Status:** Pool internals not changed by new orchestration. Must be fixed separately.
 
 ---
 
-### CRITICAL: Global rate_tracker Without Synchronization [CRITICAL]
+### CRITICAL: Global rate_tracker Without Synchronization [CRITICAL] ⚠️ NOT ADDRESSED
 
 **Location:** `explorer/src/browser/base.py:94-151`
 
@@ -413,60 +635,44 @@ def _save(self):
 
 **Problem:** Multiple async tasks call `mark_limited()`, `is_available()`, `_save()` without any synchronization.
 
-**Impact:** Dictionary corruption, inconsistent state, race conditions in file writes.
+**Status:** New LLMQuotas is centralized but old rate_tracker still exists in explorer code. Must be migrated.
 
 ---
 
-### HIGH: File TOCTOU in Queue Recovery [HIGH]
+### HIGH: File TOCTOU in Queue Recovery [HIGH] ⚠️ NOT ADDRESSED
 
 **Location:** `pool/src/queue.py:236-268`
 
-```python
-if not self.state_file.exists():  # CHECK
-    return restored
-
-with open(self.state_file, encoding="utf-8") as f:  # USE
-    state = json.load(f)
-```
-
-**Problem:** File could be deleted/modified between check and use.
+**Status:** Pool internals not changed.
 
 ---
 
-### HIGH: JobStore Content Cache Race [HIGH]
+### HIGH: JobStore Content Cache Race [HIGH] ⚠️ NOT ADDRESSED
 
 **Location:** `pool/src/jobs.py:121-127`
 
-```python
-def _clean_expired_cache(self):
-    expired = [h for h, t in self._cache_times.items() if now - t > self.cache_ttl]
-    for h in expired:
-        self._content_cache.pop(h, None)  # RACE: dict modified
-        self._cache_times.pop(h, None)
-```
-
-**Problem:** TOCTOU between list comprehension and pop operations.
+**Status:** Pool internals not changed.
 
 ---
 
-### Race Conditions Summary
+### Race Conditions Summary (Updated)
 
-| Issue | Severity | Type |
-|-------|----------|------|
-| Unprotected worker state | CRITICAL | Data Race |
-| Global rate_tracker | CRITICAL | File + Memory Race |
-| Queue recovery TOCTOU | HIGH | File Race |
-| JobStore cache cleanup | HIGH | Memory Race |
-| Callback variable capture | HIGH | Closure Race |
-| JSON file writes | HIGH | File Corruption |
-| Lock under blocking I/O | MEDIUM | Serialization |
-| File deletion races | MEDIUM | Resource Race |
+| Issue | Severity | New Design Status |
+|-------|----------|-------------------|
+| Unprotected worker state | CRITICAL | ⚠️ NOT ADDRESSED |
+| Global rate_tracker | CRITICAL | ⚠️ PARTIALLY (new quota, old tracker remains) |
+| Queue recovery TOCTOU | HIGH | ⚠️ NOT ADDRESSED |
+| JobStore cache cleanup | HIGH | ⚠️ NOT ADDRESSED |
+| Callback variable capture | HIGH | ✅ No callbacks in new design |
+| JSON file writes | HIGH | ✅ Atomic in StateManager |
+| Lock under blocking I/O | MEDIUM | ✅ Async-first design |
+| File deletion races | MEDIUM | ⚠️ NOT ADDRESSED |
 
 ---
 
-## 7. Error Handling
+## 8. Error Handling
 
-### CRITICAL: Bare Except Clause [CRITICAL]
+### CRITICAL: Bare Except Clause [CRITICAL] ⚠️ NOT ADDRESSED
 
 **Location:** `control/debug_util.py:47`
 
@@ -477,153 +683,130 @@ except:  # ⚠️ BARE EXCEPT
     pass
 ```
 
-**Problem:** Catches `KeyboardInterrupt`, `SystemExit`, and all other exceptions.
-
-**Fix:** Use `except (re.error, Exception):`
+**Status:** Control panel code not changed by new orchestration.
 
 ---
 
-### HIGH: Swallowed Exceptions in Worker Loop [HIGH]
+### HIGH: Swallowed Exceptions in Worker Loop [HIGH] ⚠️ NOT ADDRESSED
 
 **Location:** `pool/src/workers.py:451-454`
 
-```python
-try:
-    await self.browser.page.evaluate(...)
-except Exception:
-    pass  # Best effort scroll
-```
-
-**Problem:** Too broad exception handling. Should catch specific Playwright exceptions.
+**Status:** Pool internals not changed.
 
 ---
 
-### MEDIUM: Unsafe asyncio.gather Results [MEDIUM]
+### Error Handling Summary (Updated)
 
-**Locations:** Multiple files use `return_exceptions=True`
-
-Most locations DO check for exceptions in results, but the pattern is error-prone:
-
-```python
-results = await asyncio.gather(*tasks, return_exceptions=True)
-for result in results:
-    if isinstance(result, Exception):  # Easy to forget
-        # handle
-```
+| Issue | Location | New Design Status |
+|-------|----------|-------------------|
+| Bare except | `control/debug_util.py:47` | ⚠️ NOT ADDRESSED |
+| Broad Exception catch | `pool/src/workers.py:451` | ⚠️ NOT ADDRESSED |
+| Silent failures | Multiple locations | ⚠️ PARTIAL (new logging better) |
+| Missing timeout config | `explorer/src/browser/base.py:244` | ✅ Configurable in new design |
+| Inconsistent logging | Mixed structured/string | ✅ Structured logging in design |
 
 ---
 
-### Error Handling Summary
+## 9. Recommendations
 
-| Issue | Location | Severity |
-|-------|----------|----------|
-| Bare except | `control/debug_util.py:47` | CRITICAL |
-| Broad Exception catch | `pool/src/workers.py:451` | HIGH |
-| Silent failures | Multiple locations | MEDIUM |
-| Missing timeout config | `explorer/src/browser/base.py:244` | MEDIUM |
-| Inconsistent logging | Mixed structured/string | LOW |
+### Phase 1: Fix Critical Issues Before Migration
 
----
+These must be fixed in current code before or during orchestration migration:
 
-## 8. Recommendations
+| Priority | Issue | Location | Action |
+|----------|-------|----------|--------|
+| 1 | Directory lookup bug | `insight_processor.py:390` | Fix path to `insights/pending` |
+| 2 | Documenter dedup loading | `session.py:217-237` | Load `blessed_insights.json` on startup |
+| 3 | Global rate_tracker races | `base.py:94-151` | Add threading.Lock or migrate to LLMQuotas |
+| 4 | Unprotected worker state | `workers.py:45-48` | Add asyncio.Lock |
+| 5 | Bare except | `debug_util.py:47` | Change to `except Exception:` |
+| 6 | Fire-and-forget save | `insight_processor.py:372` | Change to `await` |
 
-### Immediate Fixes (CRITICAL)
+### Phase 2: Implement New Orchestration with Fixes
 
-1. **Fix JobStore Priority Scheduling**
-   - Location: `pool/src/jobs.py:211-234`
-   - Replace list-based queue with heap-based priority queue
-   - Ensure `priority` field is used in ordering
+Address new design issues during implementation:
 
-2. **Fix Worker Scheduling Order**
-   - Location: `pool/src/workers.py:71-91`
-   - Check priority across BOTH queues before processing
-   - Process highest priority regardless of queue type
+| Priority | Issue | Section | Recommendation |
+|----------|-------|---------|----------------|
+| 1 | Pool role unclear | NEW-8 | Decide Pool's future before coding |
+| 2 | RUNNING task recovery gap | NEW-5 | Save conversation state before LLM requests |
+| 3 | ConversationState size | NEW-1 | Add message limit (e.g., 50) |
+| 4 | Task queue unbounded | NEW-4 | Add per-module limits with backpressure |
+| 5 | Checkpoint failure handling | NEW-6 | Add retry + alerting |
+| 6 | Preemption granularity | NEW-2 | Add preemption points for file ops |
+| 7 | Module task generation race | NEW-7 | Validate tasks before execution |
+| 8 | LLM consultation overhead | NEW-3 | Make conditional |
 
-3. **Fix Directory Lookup Bug**
-   - Location: `explorer/src/orchestration/insight_processor.py:390`
-   - Correct path to `insights/pending` instead of `pending`
+### Phase 3: Cleanup During Migration
 
-4. **Add Blessed Insights to Documenter Dedup**
-   - Location: `documenter/session.py:217-237`
-   - Load `blessed_insights.json` into dedup checker on startup
-
-5. **Add Synchronization to rate_tracker**
-   - Location: `explorer/src/browser/base.py:94-151`
-   - Add `threading.Lock()` around all state modifications
-
-6. **Fix Bare Except**
-   - Location: `control/debug_util.py:47`
-   - Change to `except (re.error, Exception):`
-
-### Short-term Improvements (HIGH)
-
-7. **Implement Atomic File Writes**
-   - All JSON persistence: write to temp file, then `os.rename()`
-   - Affected: `pool/src/state.py`, `pool/src/jobs.py`, `pool/src/queue.py`, `blessed_store.py`
-
-8. **Add Worker State Locks**
-   - Location: `pool/src/workers.py:45-48`
-   - Add `asyncio.Lock()` for `_current_*` variables
-
-9. **Auto-Recover Active Work on Pool Startup**
-   - Location: `pool/src/api.py:75-101`
-   - Check for active work in state and attempt immediate recovery
-
-10. **Fix Fire-and-Forget Save**
-    - Location: `explorer/src/orchestration/insight_processor.py:372`
-    - Change `create_task()` to `await`
-
-11. **Unify Deep Mode Tracking**
-    - Single source of truth in pool state
-    - Explorer queries pool for quota availability
-
-### Medium-term Improvements
-
-12. **Implement Work Stealing**
-    - Allow idle models to pick up new work without waiting for cycle completion
-
-13. **Cache Thread Metadata**
-    - Avoid filesystem scans on every cycle
-
-14. **Add Document-Level File Locking**
-    - Prevent multi-process write corruption
-
-15. **Reduce Watchdog Timeout**
-    - Make configurable, default to lower value (e.g., 15 min)
-
-16. **Add Request Recovery Metadata**
-    - Allow clients to query status and retry after pool restart
+| Action | Files Affected |
+|--------|----------------|
+| Remove old rate_tracker | `explorer/src/browser/base.py` |
+| Remove old deep_mode_state | `explorer/src/browser/model_selector.py` |
+| Simplify/remove Pool queues | `pool/src/jobs.py`, `pool/src/queue.py` |
+| Apply atomic writes everywhere | `blessed_store.py`, `document.py`, etc. |
 
 ---
 
-## Appendix: Files Requiring Changes
+## Appendix A: Issue Status Summary
 
-| File | Issues | Priority |
-|------|--------|----------|
-| `pool/src/jobs.py` | Priority scheduling broken | CRITICAL |
-| `pool/src/workers.py` | Scheduling order, race conditions | CRITICAL |
-| `explorer/src/orchestration/insight_processor.py` | Directory bug, fire-and-forget | CRITICAL |
-| `documenter/session.py` | Missing dedup loading | CRITICAL |
-| `explorer/src/browser/base.py` | Global rate_tracker races | CRITICAL |
-| `control/debug_util.py` | Bare except | CRITICAL |
-| `pool/src/state.py` | Non-atomic writes | HIGH |
-| `pool/src/queue.py` | TOCTOU, non-atomic writes | HIGH |
-| `explorer/src/orchestration/blessed_store.py` | Non-atomic writes | HIGH |
-| `pool/src/api.py` | No active work recovery on startup | HIGH |
-| `documenter/document.py` | Non-atomic writes | MEDIUM |
-| `explorer/src/orchestrator.py` | No work stealing | MEDIUM |
+### Issues by New Design Status
+
+| Status | Count | Percentage |
+|--------|-------|------------|
+| ✅ Addressed by new design | 12 | 26% |
+| ⚠️ Not addressed (fix required) | 23 | 49% |
+| ⚠️ Partially addressed | 4 | 9% |
+| 🆕 New issues in design | 8 | 17% |
+| **Total Issues** | **47 + 8 = 55** | |
+
+### Critical Issues Checklist
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | JobStore ignores priority | ✅ Addressed |
+| 2 | Worker scheduling inversion | ✅ Addressed |
+| 3 | Directory lookup bug | ⚠️ Fix required |
+| 4 | Documenter dedup missing | ⚠️ Fix required |
+| 5 | Unprotected worker state | ⚠️ Fix required |
+| 6 | Global rate_tracker races | ⚠️ Fix required |
+| 7 | Bare except clause | ⚠️ Fix required |
+| 8 | Dual deep mode tracking | ✅ Addressed |
 
 ---
 
-## Issue Count by Severity
+## Appendix B: Files Requiring Changes (Updated)
 
-| Severity | Count |
-|----------|-------|
-| CRITICAL | 8 |
-| HIGH | 15 |
-| MEDIUM | 14 |
-| LOW | 10 |
-| **TOTAL** | **47** |
+| File | Issue Type | When to Fix |
+|------|------------|-------------|
+| `explorer/src/orchestration/insight_processor.py` | Directory bug, fire-and-forget | **Phase 1** |
+| `documenter/session.py` | Missing dedup loading | **Phase 1** |
+| `explorer/src/browser/base.py` | Global rate_tracker races | **Phase 1** |
+| `pool/src/workers.py` | Unprotected state, swallowed exceptions | **Phase 1** |
+| `control/debug_util.py` | Bare except | **Phase 1** |
+| `pool/src/jobs.py` | Priority scheduling (if Pool retained) | **Phase 2** |
+| `pool/src/queue.py` | TOCTOU (if Pool retained) | **Phase 2** |
+| `pool/src/state.py` | Non-atomic writes | **Phase 2** |
+| `explorer/src/orchestration/blessed_store.py` | Apply atomic writes | **Phase 3** |
+| `documenter/document.py` | Apply atomic writes | **Phase 3** |
+| `explorer/src/browser/model_selector.py` | Remove old deep_mode_state | **Phase 3** |
+
+---
+
+## Appendix C: New Orchestration Implementation Priorities
+
+Based on the design and this review, recommended implementation order:
+
+1. **StateManager** - Foundation for all persistence (atomic writes, checkpointing)
+2. **Task Model** - Define Task, TaskState, ConversationState with size limits
+3. **Scheduler** - Implement compute_priority() with all factors
+4. **LLMQuotas** - Centralized quota tracking
+5. **ModuleInterface** - Define abstract interface
+6. **ExplorerModule** - Adapt existing orchestrator.py
+7. **DocumenterModule** - Adapt existing main.py
+8. **ResearcherModule** - New implementation
+9. **TaskExecutor** - Preemption, yield points, state saving
+10. **Main Loop** - Wire everything together
 
 ---
 
